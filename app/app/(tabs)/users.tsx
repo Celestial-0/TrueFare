@@ -220,7 +220,12 @@ export default function HomeScreen() {
           <RideTracking
             currentUser={currentUser}
             currentRequest={currentRequest}
-            acceptedBid={acceptedBid}
+            acceptedBid={acceptedBid || (currentRequest?.acceptedBid ? {
+              _id: currentRequest.acceptedBid.driverId,
+              driverId: currentRequest.acceptedBid.driverId,
+              fareAmount: currentRequest.acceptedBid.fareAmount,
+              bidTime: currentRequest.acceptedBid.bidTime,
+            } : null)}
             onRideCompleted={handleRideCompleted}
             onRideCancelled={handleRideCancelled}
           />

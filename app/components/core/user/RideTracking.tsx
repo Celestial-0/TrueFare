@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   TouchableOpacity,
@@ -7,6 +7,8 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
+  FlatList,
+  Linking,
 } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
@@ -55,6 +57,39 @@ export default function RideTracking({
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [estimatedArrival, setEstimatedArrival] = useState<string>("");
+
+  // Status color mapping for better performance and readability
+  const statusColorMap: Record<string, string> = useMemo(() => ({
+    [RIDE_STATUS.ASSIGNED]: STATUS_COLORS.info,
+    [RIDE_STATUS.IN_PROGRESS]: STATUS_COLORS.warning,
+    driver_arrived: STATUS_COLORS.warning,
+    ride_started: STATUS_COLORS.warning,
+    [RIDE_STATUS.COMPLETED]: STATUS_COLORS.success,
+    [RIDE_STATUS.CANCELLED]: STATUS_COLORS.error,
+  }), []);
+
+  const getStatusColor = useCallback((status: string): string => {
+    return statusColorMap[status] || STATUS_COLORS.info;
+  }, [statusColorMap]);
+
+  const getStatusMessage = useCallback((status: string): string => {
+    switch (status) {
+      case RIDE_STATUS.ASSIGNED:
+        return "Driver assigned to your ride";
+      case RIDE_STATUS.IN_PROGRESS:
+        return "Driver is on the way";
+      case "driver_arrived":
+        return "Driver has arrived at pickup location";
+      case "ride_started":
+        return "Ride has started";
+      case RIDE_STATUS.COMPLETED:
+        return "Ride completed successfully";
+      case RIDE_STATUS.CANCELLED:
+        return "Ride has been cancelled";
+      default:
+        return "Status updated";
+    }
+  }, []);
   const styles = StyleSheet.create({
     container: {
       flex: 1,
@@ -241,7 +276,8 @@ export default function RideTracking({
     };
 
     setRideHistory([initialStatus]);
-    setEstimatedArrival("5-10 minutes"); // Demo value
+    // Remove hardcoded ETA - wait for socket updates or API response
+    setEstimatedArrival("");
   }, []);
 
   const handleRideStatusUpdate = useCallback((data: any) => {
@@ -259,7 +295,7 @@ export default function RideTracking({
     if (data.estimatedArrival) {
       setEstimatedArrival(data.estimatedArrival);
     }
-  }, []);
+  }, [getStatusMessage]);
 
   const handleDriverLocationUpdate = useCallback((data: any) => {
     console.log("Driver location update:", data);
@@ -342,62 +378,28 @@ export default function RideTracking({
 
   useEffect(() => {
     const socket = socketService.socket;
-    if (socket) {
-      // Listen for ride status updates
-      socket.on("ride:statusUpdate", handleRideStatusUpdate);
-      socket.on("driver:locationUpdate", handleDriverLocationUpdate);
-      socket.on("ride:completed", handleRideCompleted);
-      socket.on("ride:cancelled", handleRideCancelled);
+    if (!socket) return;
 
-      return () => {
-        socket.off("ride:statusUpdate", handleRideStatusUpdate);
-        socket.off("driver:locationUpdate", handleDriverLocationUpdate);
-        socket.off("ride:completed", handleRideCompleted);
-        socket.off("ride:cancelled", handleRideCancelled);
-      };
-    }
+    const cleanup = () => {
+      socket.off("ride:statusUpdate", handleRideStatusUpdate);
+      socket.off("driver:locationUpdate", handleDriverLocationUpdate);
+      socket.off("ride:completed", handleRideCompleted);
+      socket.off("ride:cancelled", handleRideCancelled);
+    };
+
+    // Listen for ride status updates
+    socket.on("ride:statusUpdate", handleRideStatusUpdate);
+    socket.on("driver:locationUpdate", handleDriverLocationUpdate);
+    socket.on("ride:completed", handleRideCompleted);
+    socket.on("ride:cancelled", handleRideCancelled);
+
+    return cleanup;
   }, [
     handleRideStatusUpdate,
     handleDriverLocationUpdate,
     handleRideCompleted,
     handleRideCancelled,
   ]);
-
-  const getStatusMessage = (status: string): string => {
-    switch (status) {
-      case RIDE_STATUS.ASSIGNED:
-        return "Driver assigned to your ride";
-      case RIDE_STATUS.IN_PROGRESS:
-        return "Driver is on the way";
-      case "driver_arrived":
-        return "Driver has arrived at pickup location";
-      case "ride_started":
-        return "Ride has started";
-      case RIDE_STATUS.COMPLETED:
-        return "Ride completed successfully";
-      case RIDE_STATUS.CANCELLED:
-        return "Ride has been cancelled";
-      default:
-        return "Status updated";
-    }
-  };
-
-  const getStatusColor = (status: string): string => {
-    switch (status) {
-      case RIDE_STATUS.ASSIGNED:
-        return STATUS_COLORS.info;
-      case RIDE_STATUS.IN_PROGRESS:
-      case "driver_arrived":
-      case "ride_started":
-        return STATUS_COLORS.warning;
-      case RIDE_STATUS.COMPLETED:
-        return STATUS_COLORS.success;
-      case RIDE_STATUS.CANCELLED:
-        return STATUS_COLORS.error;
-      default:
-        return STATUS_COLORS.info;
-    }
-  };
 
   const cancelRide = () => {
     Alert.alert(
@@ -419,7 +421,7 @@ export default function RideTracking({
 
     try {
       // This would be a real API call to cancel the ride
-      console.log("Cancelling ride:", currentRequest.requestId);
+      console.log("Cancelling ride:", currentRequest._id || currentRequest.requestId);
 
       // Simulate API call
       setRideStatus(RIDE_STATUS.CANCELLED);
@@ -449,8 +451,9 @@ export default function RideTracking({
       {
         text: "Call",
         onPress: () => {
-          // In a real app, you would use Linking.openURL(`tel:${driverInfo.phone}`)
-          Alert.alert("Demo", `Would call: ${driverInfo.phone}`);
+          Linking.openURL(`tel:${driverInfo.phone}`).catch(err =>
+            console.error('Error opening phone app:', err)
+          );
         },
       },
     ]);
@@ -522,9 +525,9 @@ export default function RideTracking({
             style={[styles.driverContainer, { borderColor: theme.text }]}
           >
             <ThemedText style={styles.sectionTitle}>Your Driver</ThemedText>
-            <ThemedText style={styles.driverName}>{driverInfo.name}</ThemedText>
+            <ThemedText style={styles.driverName}>{driverInfo.name || 'Unknown Driver'}</ThemedText>
             <ThemedText style={styles.driverInfo}>
-              ID: {driverInfo.driverId}
+              ID: {driverInfo.driverId || 'N/A'}
             </ThemedText>
             {driverInfo.phone && (
               <ThemedText style={styles.driverInfo}>
@@ -533,8 +536,7 @@ export default function RideTracking({
             )}
             {driverInfo.rating && (
               <ThemedText style={styles.driverInfo}>
-                Rating: {"⭐".repeat(Math.floor(driverInfo.rating))} (
-                {String(driverInfo.rating)}/5)
+                Rating: {"⭐".repeat(Math.floor(driverInfo.rating))} ({String(driverInfo.rating)}/5)
               </ThemedText>
             )}
 
@@ -546,9 +548,7 @@ export default function RideTracking({
                 {driverInfo.vehicleInfo.make &&
                   driverInfo.vehicleInfo.model && (
                     <ThemedText style={styles.vehicleDetail}>
-                      {driverInfo.vehicleInfo.make}{" "}
-                      {driverInfo.vehicleInfo.model} (
-                      {String(driverInfo.vehicleInfo.year)})
+                      {driverInfo.vehicleInfo.make} {driverInfo.vehicleInfo.model} ({String(driverInfo.vehicleInfo.year)})
                     </ThemedText>
                   )}
                 {driverInfo.vehicleInfo.color && (
@@ -581,16 +581,16 @@ export default function RideTracking({
         >
           <ThemedText style={styles.sectionTitle}>Ride Details</ThemedText>
           <ThemedText style={styles.rideDetail}>
-            Request ID: {currentRequest.requestId}
+            Request ID: {currentRequest._id || currentRequest.requestId || 'N/A'}
           </ThemedText>
           <ThemedText style={styles.rideDetail}>
-            From: {currentRequest.pickupLocation.address}
+            From: {currentRequest.pickupLocation?.address || 'N/A'}
           </ThemedText>
           <ThemedText style={styles.rideDetail}>
-            To: {currentRequest.destination.address}
+            To: {currentRequest.destination?.address || 'N/A'}
           </ThemedText>
           <ThemedText style={styles.rideDetail}>
-            Fare: ₹{String(acceptedBid.fareAmount)}
+            Fare: ₹{String(acceptedBid?.fareAmount || 0)}
           </ThemedText>
           {currentRequest.estimatedDistance && (
             <ThemedText style={styles.rideDetail}>
@@ -604,24 +604,33 @@ export default function RideTracking({
           style={[styles.historyContainer, { borderColor: theme.text }]}
         >
           <ThemedText style={styles.sectionTitle}>Ride Progress</ThemedText>
-          {rideHistory.map((status, index) => (
-            <View key={index} style={styles.historyItem}>
-              <View
-                style={[
-                  styles.historyDot,
-                  { backgroundColor: getStatusColor(status.status) },
-                ]}
-              />
-              <View style={styles.historyContent}>
-                <ThemedText style={styles.historyMessage}>
-                  {status.message}
-                </ThemedText>
-                <ThemedText style={styles.historyTime}>
-                  {new Date(status.timestamp).toLocaleTimeString()}
-                </ThemedText>
-              </View>
-            </View>
-          ))}
+          {rideHistory.length === 0 ? (
+            <ThemedText style={styles.noDataText}>No updates yet.</ThemedText>
+          ) : (
+            <FlatList
+              data={rideHistory}
+              keyExtractor={(_, index) => index.toString()}
+              scrollEnabled={false}
+              renderItem={({ item }) => (
+                <View style={styles.historyItem}>
+                  <View
+                    style={[
+                      styles.historyDot,
+                      { backgroundColor: getStatusColor(item.status) },
+                    ]}
+                  />
+                  <View style={styles.historyContent}>
+                    <ThemedText style={styles.historyMessage}>
+                      {item.message || 'Status update'}
+                    </ThemedText>
+                    <ThemedText style={styles.historyTime}>
+                      {item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : 'N/A'}
+                    </ThemedText>
+                  </View>
+                </View>
+              )}
+            />
+          )}
         </ThemedView>
 
         {/* Action Buttons */}

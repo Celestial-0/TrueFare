@@ -54,8 +54,8 @@ export default function TabLayout() {
         options={{
           title: 'Users',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-          // Hide the tab if driver is logged in or if user type is explicitly 'driver'
-          href: (state.currentDriver || state.userType === 'driver') ? null : '/users',
+          // Hide the tab if driver is logged in AND user type is explicitly 'driver'
+          href: (state.currentDriver && state.userType === 'driver') ? null : '/users',
         }}
       />
       <Tabs.Screen
@@ -63,8 +63,8 @@ export default function TabLayout() {
         options={{
           title: 'Drivers',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
-          // Hide the tab if user is logged in or if user type is explicitly 'user'
-          href: (state.currentUser || state.userType === 'user') ? null : '/drivers',
+          // Hide the tab if user is logged in AND user type is explicitly 'user'
+          href: (state.currentUser && state.userType === 'user') ? null : '/drivers',
         }}
       />
     </Tabs>
