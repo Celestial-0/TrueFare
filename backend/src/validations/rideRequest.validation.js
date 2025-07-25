@@ -14,14 +14,17 @@ const locationSchema = z.object({
 
 // Bid validation schema
 const bidSchema = z.object({
-    driverId: z.string().regex(/^DRIVER_[0-9A-F]{8}$/, 'Invalid driver ID format'),
+    driverId: z.string(),
     fareAmount: z.number().min(0).max(10000),
     bidTime: z.date().optional()
 });
 
 // Create ride request validation
 export const createRideRequestSchema = z.object({
-    userId: z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format').trim(),
+    userId: z.string().trim(),
+    rideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+    comfortPreference: z.number().min(1).max(5).int().optional(),
+    farePreference: z.number().min(1).max(5).int().optional(),
     pickupLocation: locationSchema,
     destination: locationSchema,
     estimatedDistance: z.number().min(0).max(1000).optional(),
@@ -41,6 +44,9 @@ export const createRideRequestSchema = z.object({
 
 // Update ride request validation
 export const updateRideRequestSchema = z.object({
+    rideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+    comfortPreference: z.number().min(1).max(5).int().optional(),
+    farePreference: z.number().min(1).max(5).int().optional(),
     status: z.enum(['pending', 'bidding', 'accepted', 'completed', 'cancelled']).optional(),
     estimatedDistance: z.number().min(0).max(1000).optional(),
     estimatedDuration: z.number().min(0).max(1440).optional()
@@ -49,13 +55,13 @@ export const updateRideRequestSchema = z.object({
 // Add bid validation
 export const addBidSchema = z.object({
     requestId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid request ID format'),
-    driverId: z.string().regex(/^DRIVER_[0-9A-F]{8}$/, 'Invalid driver ID format'),
+    driverId: z.string(),
     fareAmount: z.number().min(0).max(10000)
 });
 
 // Place bid validation (for request body only)
 export const placeBidSchema = z.object({
-    driverId: z.string().regex(/^DRIVER_[0-9A-F]{8}$/, 'Invalid driver ID format'),
+    driverId: z.string(),
     fareAmount: z.number().min(0).max(10000),
     estimatedPickupTime: z.string().optional(),
     message: z.string().optional()
@@ -64,8 +70,8 @@ export const placeBidSchema = z.object({
 // Accept bid validation
 export const acceptBidSchema = z.object({
     requestId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid request ID format'),
-    bidId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid bid ID format'),
-    userId: z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format')
+    driverId: z.string(),
+    fareAmount: z.number().min(0).max(10000)
 });
 
 // Get ride requests query validation
@@ -73,7 +79,11 @@ export const getRideRequestsQuerySchema = z.object({
     page: z.coerce.number().min(1).default(1),
     limit: z.coerce.number().min(1).max(100).default(10),
     status: z.enum(['pending', 'bidding', 'accepted', 'completed', 'cancelled']).optional(),
-    sortBy: z.enum(['createdAt', 'updatedAt', 'status']).default('createdAt'),
+    rideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+    userId: z.string().optional(),
+    minFare: z.number().min(0).optional(),
+    maxFare: z.number().min(0).optional(),
+    sortBy: z.enum(['createdAt', 'updatedAt', 'status', 'estimatedDistance', 'estimatedDuration']).default('createdAt'),
     order: z.enum(['asc', 'desc']).default('desc')
 });
 
@@ -108,4 +118,12 @@ export const validateLocation = (location) => {
 
 export const validateBid = (bid) => {
     return bidSchema.safeParse(bid);
+};
+
+export const validateRideType = (rideType) => {
+    return z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).safeParse(rideType);
+};
+
+export const validatePreference = (preference) => {
+    return z.number().min(1).max(5).int().safeParse(preference);
 };

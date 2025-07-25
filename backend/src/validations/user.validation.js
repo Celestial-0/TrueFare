@@ -20,11 +20,14 @@ export const userRegistrationSchema = z.object({
     phone: z.string().regex(/^[+]?[\d\s\-\(\)]+$/, 'Invalid phone number format').min(10).max(20).trim(),
     defaultLocation: locationSchema.optional(),
     preferences: z.object({
-        maxWaitTime: z.number().min(1).max(60).default(10),
+        maxWaitTime: z.number().min(1).max(60).optional(),
         priceRange: z.object({
             min: z.number().min(0).optional(),
             max: z.number().min(0).optional()
-        }).optional()
+        }).optional(),
+        defaultRideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+        comfortPreference: z.number().min(1).max(5).int().optional(),
+        farePreference: z.number().min(1).max(5).int().optional()
     }).optional()
 });
 
@@ -39,7 +42,10 @@ export const userUpdateSchema = z.object({
         priceRange: z.object({
             min: z.number().min(0).optional(),
             max: z.number().min(0).optional()
-        }).optional()
+        }).optional(),
+        defaultRideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+        comfortPreference: z.number().min(1).max(5).int().optional(),
+        farePreference: z.number().min(1).max(5).int().optional()
     }).optional()
 });
 
@@ -59,6 +65,34 @@ export const userSocketRegistrationSchema = z.object({
     phone: z.string().regex(/^[+]?[\d\s\-\(\)]+$/, 'Invalid phone number format').min(10).max(20).trim()
 });
 
+// User preferences update validation
+export const userPreferencesUpdateSchema = z.object({
+    maxWaitTime: z.number().min(1).max(60).optional(),
+    priceRange: z.object({
+        min: z.number().min(0).optional(),
+        max: z.number().min(0).optional()
+    }).optional(),
+    defaultRideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+    comfortPreference: z.number().min(1).max(5).int().optional(),
+    farePreference: z.number().min(1).max(5).int().optional()
+});
+
+// User status update validation
+export const userStatusUpdateSchema = z.object({
+    isOnline: z.boolean()
+});
+
+// User query validation
+export const userQuerySchema = z.object({
+    isOnline: z.boolean().optional(),
+    minRating: z.number().min(0).max(5).optional(),
+    maxRating: z.number().min(0).max(5).optional(),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10),
+    sortBy: z.enum(['name', 'rating', 'totalRides', 'createdAt', 'lastSeen']).default('createdAt'),
+    order: z.enum(['asc', 'desc']).default('desc')
+});
+
 // Common validation helpers
 export const validateUserId = (userId) => {
     return z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format').safeParse(userId);
@@ -70,4 +104,12 @@ export const validateCoordinates = (coordinates) => {
 
 export const validateLocation = (location) => {
     return locationSchema.safeParse(location);
+};
+
+export const validateUserPreferences = (preferences) => {
+    return userPreferencesUpdateSchema.safeParse(preferences);
+};
+
+export const validateRideType = (rideType) => {
+    return z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).safeParse(rideType);
 };

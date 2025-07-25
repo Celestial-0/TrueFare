@@ -6,22 +6,69 @@ const rideRequestSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    rideType: {
+        type: String,
+        enum: ['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto'],
+        required: false
+    },
+    comfortPreference: {
+        type: Number,
+        min: 1,
+        max: 5,
+        required: false
+    },
+    farePreference: {
+        type: Number,
+        min: 1,
+        max: 5,
+        required: false
+    },
     pickupLocation: {
         type: {
-            address: String,
+            address: {
+                type: String,
+                required: true,
+                maxlength: 500,
+                trim: true
+            },
             coordinates: {
-                latitude: Number,
-                longitude: Number
+                latitude: {
+                    type: Number,
+                    required: true,
+                    min: -90,
+                    max: 90
+                },
+                longitude: {
+                    type: Number,
+                    required: true,
+                    min: -180,
+                    max: 180
+                }
             }
         },
         required: true
     },
     destination: {
         type: {
-            address: String,
+            address: {
+                type: String,
+                required: true,
+                maxlength: 500,
+                trim: true
+            },
             coordinates: {
-                latitude: Number,
-                longitude: Number
+                latitude: {
+                    type: Number,
+                    required: true,
+                    min: -90,
+                    max: 90
+                },
+                longitude: {
+                    type: Number,
+                    required: true,
+                    min: -180,
+                    max: 180
+                }
             }
         },
         required: true
@@ -32,23 +79,43 @@ const rideRequestSchema = new mongoose.Schema({
         default: 'pending'
     },
     estimatedDistance: {
-        type: Number // in kilometers
+        type: Number, // in kilometers
+        min: 0,
+        max: 1000
     },
     estimatedDuration: {
-        type: Number // in minutes
+        type: Number, // in minutes
+        min: 0,
+        max: 1440 // max 24 hours
     },
     bids: [{
-        driverId: String,
-        fareAmount: Number,
+        driverId: {
+            type: String,
+            required: true
+        },
+        fareAmount: {
+            type: Number,
+            required: true,
+            min: 0,
+            max: 10000
+        },
         bidTime: {
             type: Date,
             default: Date.now
         }
     }],
     acceptedBid: {
-        driverId: String,
-        fareAmount: Number,
-        bidTime: Date
+        driverId: {
+            type: String
+        },
+        fareAmount: {
+            type: Number,
+            min: 0,
+            max: 10000
+        },
+        bidTime: {
+            type: Date
+        }
     }
 }, {
     timestamps: true

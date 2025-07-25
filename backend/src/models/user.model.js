@@ -11,27 +11,53 @@ const userSchema = new mongoose.Schema({
     },
     name: {
         type: String,
-        required: true
+        required: true,
+        maxlength: 100,
+        trim: true
     },
     email: {
         type: String,
         required: false,
         sparse: true,
         unique: true,
-        default: undefined
+        default: undefined,
+        validate: {
+            validator: function(v) {
+                return !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+            },
+            message: 'Invalid email format'
+        }
     },
     phone: {
         type: String,
         required: true,
-        unique: true
+        unique: true,
+        trim: true,
+        validate: {
+            validator: function(v) {
+                return /^[+]?[\d\s\-\(\)]+$/.test(v) && v.length >= 10 && v.length <= 20;
+            },
+            message: 'Invalid phone number format'
+        }
     },
     defaultLocation: {
         type: {
             coordinates: {
-                latitude: Number,
-                longitude: Number
+                latitude: {
+                    type: Number,
+                    min: -90,
+                    max: 90
+                },
+                longitude: {
+                    type: Number,
+                    min: -180,
+                    max: 180
+                }
             },
-            address: String
+            address: {
+                type: String,
+                maxlength: 500
+            }
         }
     },
     rating: {
@@ -66,6 +92,23 @@ const userSchema = new mongoose.Schema({
                 type: Number,
                 default: APP_CONSTANTS.USER_DEFAULTS.PRICE_RANGE_MAX
             }
+        },
+        defaultRideType: {
+            type: String,
+            enum: ['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto'],
+            default: 'Taxi'
+        },
+        comfortPreference: {
+            type: Number,
+            min: 1,
+            max: 5,
+            default: 3
+        },
+        farePreference: {
+            type: Number,
+            min: 1,
+            max: 5,
+            default: 3
         }
     }
 }, {

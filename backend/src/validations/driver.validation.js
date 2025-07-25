@@ -15,13 +15,15 @@ const locationSchema = z.object({
     coordinates: coordinatesSchema
 });
 
-// Vehicle info validation schema
+// Vehicle info validation schema (simplified for driver registration)
 const vehicleInfoSchema = z.object({
     make: z.string().max(50).optional().or(z.literal('')),
     model: z.string().max(50).optional().or(z.literal('')),
     year: z.number().min(1900).max(new Date().getFullYear() + 1).optional(),
     licensePlate: z.string().max(20).optional().or(z.literal('')),
-    color: z.string().max(30).optional().or(z.literal(''))
+    vehicleType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+    comfortLevel: z.number().min(1).max(5).int().optional(),
+    priceValue: z.number().min(1).max(5).int().optional()
 });
 
 // Driver registration validation
@@ -71,6 +73,31 @@ export const driverStatusUpdateSchema = z.object({
     status: z.enum([APP_CONSTANTS.DRIVER_STATUS.AVAILABLE, APP_CONSTANTS.DRIVER_STATUS.BUSY, APP_CONSTANTS.DRIVER_STATUS.OFFLINE])
 });
 
+// Driver vehicle assignment validation
+export const driverVehicleAssignmentSchema = z.object({
+    vehicleIds: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid vehicle ID format'))
+        .min(0, 'Vehicle IDs array cannot be negative')
+        .max(10, 'Cannot assign more than 10 vehicles')
+});
+
+// Driver query validation
+export const driverQuerySchema = z.object({
+    status: z.enum([APP_CONSTANTS.DRIVER_STATUS.AVAILABLE, APP_CONSTANTS.DRIVER_STATUS.BUSY, APP_CONSTANTS.DRIVER_STATUS.OFFLINE]).optional(),
+    isOnline: z.boolean().optional(),
+    minRating: z.number().min(0).max(5).optional(),
+    maxRating: z.number().min(0).max(5).optional(),
+    hasVehicles: z.boolean().optional(),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10),
+    sortBy: z.enum(['name', 'rating', 'totalRides', 'status', 'createdAt', 'lastSeen']).default('createdAt'),
+    order: z.enum(['asc', 'desc']).default('desc')
+});
+
+// Driver online status validation
+export const driverOnlineStatusSchema = z.object({
+    isOnline: z.boolean()
+});
+
 // Common validation helpers
 export const validateDriverId = (driverId) => {
     return z.string().regex(/^DRIVER_[0-9A-F]{8}$/, 'Invalid driver ID format').safeParse(driverId);
@@ -82,4 +109,12 @@ export const validateVehicleInfo = (vehicleInfo) => {
 
 export const validateDriverLocation = (location) => {
     return driverLocationUpdateSchema.safeParse(location);
+};
+
+export const validateDriverStatus = (status) => {
+    return z.enum([APP_CONSTANTS.DRIVER_STATUS.AVAILABLE, APP_CONSTANTS.DRIVER_STATUS.BUSY, APP_CONSTANTS.DRIVER_STATUS.OFFLINE]).safeParse(status);
+};
+
+export const validateVehicleIds = (vehicleIds) => {
+    return z.array(z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid vehicle ID format')).safeParse(vehicleIds);
 };
