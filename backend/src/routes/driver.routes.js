@@ -4,13 +4,43 @@ import {
     registerDriver, 
     getDriverProfile, 
     updateDriverProfile,
+   
+} from '../controllers/auth.controller.js';
+import {
     getDriverEarnings,
     getDriverBids,
     getDriverRideHistory,
-    updateDriverStatus
-} from '../controllers/registration.controller.js';
-import { driverRegistrationSchema, driverUpdateSchema } from '../validations/driver.validation.js';
-import { validateRequest, validateParams, driverIdParamSchema } from '../validations/common.validation.js';
+    updateDriverLocation,
+    getDriverStats,
+    getDriverVehicles,
+    assignVehiclesToDriver,
+    removeVehiclesFromDriver,
+    getAvailableDrivers,
+    getNearbyDrivers,
+    bulkUpdateDriverStatus,
+    getDriverAnalytics
+} from '../controllers/driver.controller.js';
+import { 
+    driverRegistrationSchema, 
+    driverUpdateSchema,
+    driverLocationUpdateSchema,
+    driverStatusUpdateSchema,
+    driverQuerySchema,
+    driverEarningsQuerySchema,
+    driverBidHistoryQuerySchema,
+    driverRideHistoryQuerySchema,
+    nearbyDriversQuerySchema,
+    bulkUpdateDriverStatusSchema,
+    driverAnalyticsQuerySchema,
+    driverVehicleAssignmentSchema
+} from '../validations/driver.validation.js';
+import { 
+    validateRequest, 
+    validateQuery,
+    validateParams, 
+    driverIdParamSchema,
+    analyticsQuerySchema
+} from '../validations/common.validation.js';
 
 const router = express.Router();
 
@@ -28,36 +58,61 @@ router.put('/profile/:driverId',
 );
 
 // GET /api/drivers/:driverId/earnings - Get driver earnings
-router.get('/:driverId/earnings', validateParams(driverIdParamSchema), getDriverEarnings);
+router.get('/:driverId/earnings', validateParams(driverIdParamSchema), validateQuery(driverEarningsQuerySchema), getDriverEarnings);
 
 // GET /api/drivers/:driverId/bids - Get driver bid history
-router.get('/:driverId/bids', validateParams(driverIdParamSchema), getDriverBids);
+router.get('/:driverId/bids', validateParams(driverIdParamSchema), validateQuery(driverBidHistoryQuerySchema), getDriverBids);
 
 // GET /api/drivers/:driverId/rides - Get driver ride history
-router.get('/:driverId/rides', validateParams(driverIdParamSchema), getDriverRideHistory);
+router.get('/:driverId/rides', validateParams(driverIdParamSchema), validateQuery(driverRideHistoryQuerySchema), getDriverRideHistory);
 
-// PATCH /api/drivers/:driverId/status - Update driver status
-router.patch('/:driverId/status', validateParams(driverIdParamSchema), updateDriverStatus);
 
-// PATCH /api/drivers/:driverId/vehicle - Update driver vehicle info
+
+// PUT /api/drivers/:driverId/location - Update driver location
+router.put('/:driverId/location', validateParams(driverIdParamSchema), validateRequest(driverLocationUpdateSchema), updateDriverLocation);
+
+// GET /api/drivers/:driverId/stats - Get driver statistics
+router.get('/:driverId/stats', validateParams(driverIdParamSchema), validateQuery(analyticsQuerySchema), getDriverStats);
+
+// GET /api/drivers/:driverId/vehicles - Get driver vehicles
+router.get('/:driverId/vehicles', validateParams(driverIdParamSchema), getDriverVehicles);
+
+// POST /api/drivers/:driverId/vehicles - Assign vehicles to driver
+router.post('/:driverId/vehicles', 
+    validateParams(driverIdParamSchema), 
+    validateRequest(driverVehicleAssignmentSchema), 
+    assignVehiclesToDriver
+);
+
+// DELETE /api/drivers/:driverId/vehicles - Remove vehicles from driver
+router.delete('/:driverId/vehicles', 
+    validateParams(driverIdParamSchema), 
+    validateRequest(driverVehicleAssignmentSchema), 
+    removeVehiclesFromDriver
+);
+
+// PATCH /api/drivers/:driverId/vehicle - Update driver vehicle info (deprecated - use vehicle endpoints)
 router.patch('/:driverId/vehicle', 
     validateParams(driverIdParamSchema), 
     validateRequest(driverUpdateSchema), 
     updateDriverProfile // Reuse profile update for vehicle info
 );
 
+// GET /api/drivers/available - Get all available drivers
+router.get('/available', validateQuery(driverQuerySchema), getAvailableDrivers);
+
+// GET /api/drivers/nearby - Get nearby drivers with enhanced filtering
+router.get('/nearby', validateQuery(nearbyDriversQuerySchema), getNearbyDrivers);
+
+// Admin Routes
+// PATCH /api/drivers/bulk-status - Bulk update driver statuses
+router.patch('/bulk-status', validateRequest(bulkUpdateDriverStatusSchema), bulkUpdateDriverStatus);
+
+// GET /api/drivers/:driverId/analytics - Get driver performance analytics
+router.get('/:driverId/analytics', validateParams(driverIdParamSchema), validateQuery(driverAnalyticsQuerySchema), getDriverAnalytics);
+
 // GET /api/drivers/connected - Get all connected drivers (for admin/debugging)
 router.get('/connected', (req, res) => {
-    const drivers = getConnectedDrivers();
-    res.json({
-        success: true,
-        data: drivers,
-        count: drivers.length
-    });
-});
-
-// GET /api/drivers - Get all drivers (for admin/debugging)
-router.get('/', (req, res) => {
     const drivers = getConnectedDrivers();
     res.json({
         success: true,

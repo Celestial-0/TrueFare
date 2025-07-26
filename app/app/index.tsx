@@ -6,15 +6,15 @@ import { ThemedView } from '@/components/ThemedView';
 import { useApp } from '@/contexts/AppContext';
 
 export default function IndexScreen() {
-  const { state } = useApp();
+  const { currentDriver, currentUser } = useApp();
 
   useEffect(() => {
     // Wait a moment for the context to initialize
     const timer = setTimeout(() => {
-      if (state.currentDriver) {
+      if (currentDriver) {
         // If there's a driver logged in, go to drivers tab
         router.replace('/drivers');
-      } else if (state.currentUser) {
+      } else if (currentUser) {
         // If there's a user logged in, go to users tab
         router.replace('/users');
       } else {
@@ -24,7 +24,7 @@ export default function IndexScreen() {
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [state.currentDriver, state.currentUser]);
+  }, [currentDriver, currentUser]);
 
   return (
     <ThemedView style={styles.container}>

@@ -8,10 +8,11 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "fix-email-index": "node src/scripts/fix-email-index.js"
+    "dev": "nodemon src/index.js"
   },
   "dependencies": {
+    "axios": "^1.11.0",
+    "chalk": "^5.4.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",
@@ -22,7 +23,13 @@
     "zod": "^4.0.5"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
+    "babel-jest": "^30.0.5",
+    "jest": "^30.0.5",
     "nodemon": "^3.1.10",
-    "prettier": "^3.6.2"
+    "prettier": "^3.6.2",
+    "socket.io-client": "^4.8.1",
+    "supertest": "^7.1.4"
   }
 }

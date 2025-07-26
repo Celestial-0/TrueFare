@@ -3,59 +3,38 @@ import { StyleSheet } from 'react-native';
 
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 
-
 import { useState, useEffect } from 'react';
-import LoginDriver from '@/components/core/auth/Driver';
+import LoginDriver from '@/components/core/auth/DriverAuth';
 import DriverDashboard from '@/components/core/driver/DriverDashboard';
 import AvailableRequests from '@/components/core/driver/AvailableRequests';
-import { parseVehicleYear } from '@/utils/constants';
 import DriverEarnings from '@/components/core/driver/DriverEarnings';
 import VehicleInfoManagement from '@/components/core/driver/VehicleInfoManagement';
-import { DriversProfile } from '@/components/core/driver/DriversProfile';
+import DriversProfile from '@/components/core/driver/DriversProfile';
+import ActiveRideManagement from '@/components/core/driver/ActiveRideManagement';
 import { useApp } from '@/contexts/AppContext';
-import { DriverData } from '@/utils/driverConstants';
-import { StoredDriverData } from '@/services/storageService';
 
-type DriverScreen = 'login' | 'dashboard' | 'requests' | 'earnings' | 'vehicle' | 'profile';
-
-// Helper function to convert StoredDriverData to DriverData
-const convertStoredDriverToDriverData = (storedDriver: StoredDriverData): DriverData => {
-  return {
-    driverId: storedDriver.id,
-    name: storedDriver.name,
-    phone: storedDriver.phone,
-    email: storedDriver.email,
-    status: storedDriver.status,
-    vehicleInfo: storedDriver.vehicleInfo ? {
-      make: storedDriver.vehicleInfo.make,
-      model: storedDriver.vehicleInfo.model,
-      year: parseVehicleYear(storedDriver.vehicleInfo.year) || new Date().getFullYear(),
-      color: storedDriver.vehicleInfo.color,
-      licensePlate: storedDriver.vehicleInfo.licensePlate,
-    } : undefined,
-  };
-};
+type DriverScreen = 'login' | 'dashboard' | 'requests' | 'earnings' | 'vehicle' | 'profile' | 'management';
 
 export default function TabTwoScreen() {
-  const { state, logout } = useApp();
+  const { currentDriver, currentUser, userType, socketConnected, logout } = useApp();
   
   console.log('🚗 Driver Tab - Component mounting/re-rendering:', {
-    hasCurrentDriver: !!state.currentDriver,
-    hasCurrentUser: !!state.currentUser,
-    userType: state.userType,
-    isConnected: state.isConnected
+    hasCurrentDriver: !!currentDriver,
+    hasCurrentUser: !!currentUser,
+    userType: userType,
+    socketConnected: socketConnected
   });
   
   // Initialize screen based on whether driver is already logged in
   // Use a more defensive approach that waits for the state to be properly initialized
   const [currentScreen, setCurrentScreen] = useState<DriverScreen>(() => {
     console.log('🚗 Driver Tab - Initializing state:', {
-      hasCurrentDriver: !!state.currentDriver,
-      hasCurrentUser: !!state.currentUser,
-      userType: state.userType
+      hasCurrentDriver: !!currentDriver,
+      hasCurrentUser: !!currentUser,
+      userType: userType
     });
     // During initial load, if driver is already logged in, go to dashboard
-    if (state.currentDriver && !state.currentUser) {
+    if (currentDriver && !currentUser) {
       console.log('🚗 Driver Tab - Initializing to dashboard (driver logged in)');
       return 'dashboard';
     }
@@ -66,26 +45,19 @@ export default function TabTwoScreen() {
   // Force immediate screen update on mount if driver is already logged in
   useEffect(() => {
     console.log('🚗 Driver Tab - Mount effect - checking initial driver state');
-    if (state.currentDriver && !state.currentUser && currentScreen === 'login') {
+    if (currentDriver && !currentUser && currentScreen === 'login') {
       console.log('🚗 Driver Tab - Mount effect - Driver found on mount, switching to dashboard');
       setCurrentScreen('dashboard');
     }
-  }, [state.currentDriver, state.currentUser, currentScreen]);
-
-  // Convert stored driver data to the format expected by components
-  const currentDriver: DriverData | null = state.currentDriver 
-    ? convertStoredDriverToDriverData(state.currentDriver)
-    : null;
+  }, [currentDriver, currentUser, currentScreen]);
 
   // Debug logging for driver tab
-  console.log('🔍 Driver Tab - AppContext state:', {
-    hasCurrentDriver: !!state.currentDriver,
-    hasCurrentUser: !!state.currentUser,
-    driverId: state.currentDriver?.id || 'null',
-    userId: state.currentUser?.id || 'null',
-    isConnected: state.isConnected,
-    isSocketRegistered: state.isSocketRegistered,
-    connectionStatus: state.connectionStatus,
+  console.log('🚗 Driver Tab - AppContext state:', {
+    hasCurrentDriver: !!currentDriver,
+    hasCurrentUser: !!currentUser,
+    driverId: currentDriver?._id || 'null',
+    userId: currentUser?._id || 'null',
+    socketConnected: socketConnected,
     currentScreen
   });
 
@@ -93,20 +65,20 @@ export default function TabTwoScreen() {
   // Don't interfere if a user is logged in instead
   useEffect(() => {
     console.log('🚗 Driver Tab - Main useEffect triggered:', {
-      hasCurrentDriver: !!state.currentDriver,
-      hasCurrentUser: !!state.currentUser,
+      hasCurrentDriver: !!currentDriver,
+      hasCurrentUser: !!currentUser,
       currentScreen,
-      userType: state.userType,
-      driverId: state.currentDriver?.id
+      userType: userType,
+      driverId: currentDriver?._id
     });
     
     // If a user is logged in, don't manage driver screens
-    if (state.currentUser) {
+    if (currentUser) {
       console.log('🚗 Driver Tab - User is logged in, not managing driver screens');
       return;
     }
     
-    if (state.currentDriver) {
+    if (currentDriver) {
       // If driver is logged in, ensure we're on dashboard (unless explicitly on another screen)
       if (currentScreen === 'login') {
         console.log('🚗 Driver Tab - Driver logged in, switching to dashboard');
@@ -119,38 +91,38 @@ export default function TabTwoScreen() {
         setCurrentScreen('login');
       }
     }
-  }, [state.currentDriver, state.currentUser, state.userType, currentScreen]);
+  }, [currentDriver, currentUser, userType, currentScreen]);
 
   // Specific effect to handle driver session restoration
   useEffect(() => {
     console.log('🚗 Driver Tab - Driver restoration effect:', {
-      hasCurrentDriver: !!state.currentDriver,
+      hasCurrentDriver: !!currentDriver,
       currentScreen,
-      driverId: state.currentDriver?.id,
-      userType: state.userType
+      driverId: currentDriver?._id,
+      userType: userType
     });
     
     // Force switch to dashboard when driver becomes available
-    if (state.currentDriver && !state.currentUser && currentScreen === 'login') {
+    if (currentDriver && !currentUser && currentScreen === 'login') {
       console.log('🚗 Driver Tab - Forcing switch to dashboard for restored driver');
       setCurrentScreen('dashboard');
     }
-  }, [state.currentDriver, currentScreen, state.currentUser, state.userType]);
+  }, [currentDriver, currentScreen, currentUser, userType]);
 
   // Effect to monitor userType changes specifically
   useEffect(() => {
     console.log('🚗 Driver Tab - UserType change effect:', {
-      userType: state.userType,
+      userType: userType,
       currentScreen,
-      hasCurrentDriver: !!state.currentDriver
+      hasCurrentDriver: !!currentDriver
     });
     
     // When userType becomes 'driver' and we have a driver but still on login
-    if (state.userType === 'driver' && state.currentDriver && currentScreen === 'login') {
+    if (userType === 'driver' && currentDriver && currentScreen === 'login') {
       console.log('🚗 Driver Tab - UserType is driver, switching to dashboard');
       setCurrentScreen('dashboard');
     }
-  }, [state.userType, currentScreen, state.currentDriver]);
+  }, [userType, currentScreen, currentDriver]);
 
   const handleDriverLogin = () => {
     // This will be called when login is successful
@@ -172,7 +144,7 @@ export default function TabTwoScreen() {
 
   const renderCurrentScreen = () => {
     // Don't render anything if a user is logged in
-    if (state.currentUser && !state.currentDriver) {
+    if (currentUser && !currentDriver) {
       console.log('🚗 Driver Tab - User is logged in, not rendering driver screens');
       return null;
     }
@@ -184,19 +156,18 @@ export default function TabTwoScreen() {
       case 'dashboard':
         return (
           <DriverDashboard
-            currentDriver={currentDriver}
             onLogout={handleDriverLogout}
             onNavigateToRequests={() => navigateToScreen('requests')}
             onNavigateToEarnings={() => navigateToScreen('earnings')}
             onNavigateToProfile={() => navigateToScreen('profile')}
             onNavigateToVehicle={() => navigateToScreen('vehicle')}
+            onNavigateToManagement={() => navigateToScreen('management')}
           />
         );
       
       case 'requests':
         return (
           <AvailableRequests
-            currentDriver={currentDriver}
             onBackToDashboard={() => navigateToScreen('dashboard')}
           />
         );
@@ -204,7 +175,6 @@ export default function TabTwoScreen() {
       case 'earnings':
         return (
           <DriverEarnings
-            currentDriver={currentDriver}
             onBackToDashboard={() => navigateToScreen('dashboard')}
           />
         );
@@ -212,19 +182,20 @@ export default function TabTwoScreen() {
       case 'vehicle':
         return (
           <VehicleInfoManagement
-            currentDriver={currentDriver}
             onBackToDashboard={() => navigateToScreen('dashboard')}
-            onVehicleUpdated={(vehicleInfo) => {
-              // Vehicle info is handled by the component internally
-              // The app context will be updated when the component saves the data
-            }}
           />
         );
       
       case 'profile':
         return (
           <DriversProfile
-            currentDriver={currentDriver}
+            onBackToDashboard={() => navigateToScreen('dashboard')}
+          />
+        );
+      
+      case 'management':
+        return (
+          <ActiveRideManagement
             onBackToDashboard={() => navigateToScreen('dashboard')}
           />
         );
@@ -235,15 +206,15 @@ export default function TabTwoScreen() {
   };
 
   // Don't render anything if user is logged in
-  if (state.currentUser && !state.currentDriver) {
+  if (currentUser && !currentDriver) {
     console.log('🚗 Driver Tab - User is logged in, not rendering anything');
     return null;
   }
 
   console.log('🚗 Driver Tab - About to render:', {
     currentScreen,
-    hasCurrentDriver: !!state.currentDriver,
-    userType: state.userType
+    hasCurrentDriver: !!currentDriver,
+    userType: userType
   });
 
   // For login screen, use ParallaxScrollView with header image

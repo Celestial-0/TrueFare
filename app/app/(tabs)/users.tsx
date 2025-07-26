@@ -4,154 +4,122 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
-import { useState, useEffect } from 'react';
-import LoginUser from '@/components/core/auth/User';
-import RideBooking from '@/components/core/user/RideBooking';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import LoginUser from '@/components/core/auth/UserAuth';
+import {RideBooking} from '@/components/core/user/RideBooking';
 import BidDisplay from '@/components/core/user/BidDisplay';
 import RideTracking from '@/components/core/user/RideTracking';
 import RideHistory from '@/components/core/user/RideHistory';
 import UserProfileManagement from '@/components/core/user/UserProfileManagement';
-import { UserData, RideRequest, Bid } from '@/utils/userConstants';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useApp } from '@/contexts/AppContext';
 
-type UserScreen = 'auth' | 'booking' | 'bids' | 'tracking' | 'history' | 'profile';
+type UserScreen = 'auth' | 'dashboard' | 'bids' | 'tracking' | 'history' | 'profile';
 
-export default function HomeScreen() {
+export default function UsersScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { state, logout } = useApp();
+  const { currentUser, currentDriver, userType, rideRequests, cancelRide, addNotification } = useApp();
 
   // Initialize screen based on whether user is already logged in
-  // Use a more defensive approach that waits for the state to be properly initialized
   const [currentScreen, setCurrentScreen] = useState<UserScreen>(() => {
-    // During initial load, if we don't know the state yet, default to auth
-    if (state.currentUser && !state.currentDriver) {
-      return 'booking';
+    if (currentUser && !currentDriver) {
+      return 'dashboard';
     }
     return 'auth';
   });
-  const [acceptedBid, setAcceptedBid] = useState<Bid | null>(null);
 
-  // Get current request from AppContext - look for pending or bidding requests
-  const appContextRequest = state.rideRequests.find(req => 
-    req.status === 'pending' || req.status === 'bidding'
-  ) || null;
-  
-  // Convert AppContext RideRequest to component RideRequest format
-  const currentRequest: RideRequest | null = appContextRequest ? {
-    _id: appContextRequest._id,
-    userId: appContextRequest.userId,
-    pickupLocation: appContextRequest.pickupLocation,
-    destination: appContextRequest.destination,
-    status: appContextRequest.status,
-    estimatedDistance: appContextRequest.estimatedDistance,
-    estimatedDuration: appContextRequest.estimatedDuration,
-    bids: appContextRequest.bids || [],
-    acceptedBid: appContextRequest.acceptedBid,
-    createdAt: appContextRequest.createdAt,
-    updatedAt: appContextRequest.updatedAt,
-  } : null;
+  // Find active ride request - only one ride request should be processed at a time
+  const activeRideRequest = useMemo(() => {
+    const activeRequests = rideRequests.filter((r) => ['pending', 'bidding', 'accepted'].includes(r.status));
+    
+    // Return the most recent active ride request (latest created)
+    if (activeRequests.length > 0) {
+      return activeRequests.reduce((latest, current) => {
+        const latestTime = new Date(latest.createdAt || 0).getTime();
+        const currentTime = new Date(current.createdAt || 0).getTime();
+        return currentTime > latestTime ? current : latest;
+      });
+    }
+    
+    return null;
+  }, [rideRequests]);
 
-  // Convert stored user data to the format expected by components
-  const currentUser: UserData | null = state.currentUser ? {
-    userId: state.currentUser.id,
-    name: state.currentUser.name,
-    phone: state.currentUser.phone,
-    email: state.currentUser.email,
-  } : null;
+  // Check if user can create a new ride request
+  const canCreateNewRide = !activeRideRequest;
+
+  // Handle ride request creation and navigation
+  const handleRideRequestCreated = useCallback((requestId: string) => {
+    console.log('🔄 [Users Tab] Ride request created, switching to bids tab:', requestId);
+    setCurrentScreen('bids');
+  }, []);
+
+  // Handle ride cancellation
+  const handleCancelRide = useCallback(async () => {
+    if (!activeRideRequest) return;
+    
+    try {
+      await cancelRide(activeRideRequest.requestId, 'User cancelled');
+      addNotification({
+        type: 'success',
+        message: 'Ride request cancelled successfully',
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      console.error('Error cancelling ride:', error);
+      addNotification({
+        type: 'error',
+        message: 'Failed to cancel ride. Please try again.',
+        createdAt: new Date(),
+      });
+    }
+  }, [activeRideRequest, cancelRide, addNotification]);
 
   // Check if user is logged in and update screen accordingly
-  // Don't interfere if a driver is logged in instead
   useEffect(() => {
     console.log('👤 Users Tab - useEffect triggered:', {
-      hasCurrentUser: !!state.currentUser,
-      hasCurrentDriver: !!state.currentDriver,
+      hasCurrentUser: !!currentUser,
+      hasCurrentDriver: !!currentDriver,
       currentScreen,
-      userType: state.userType
+      userType: userType
     });
     
     // If a driver is logged in, don't manage user screens
-    if (state.currentDriver) {
+    if (currentDriver && !currentUser) {
       console.log('👤 Users Tab - Driver is logged in, not managing user screens');
       return;
     }
     
-    if (state.currentUser && currentScreen === 'auth') {
-      console.log('👤 Users Tab - User logged in, switching to booking');
-      setCurrentScreen('booking');
-    } else if (!state.currentUser && currentScreen !== 'auth') {
+    if (currentUser && currentScreen === 'auth') {
+      console.log('👤 Users Tab - User logged in, switching to dashboard');
+      setCurrentScreen('dashboard');
+    } else if (!currentUser && currentScreen !== 'auth') {
       console.log('👤 Users Tab - No user logged in, switching to auth');
       setCurrentScreen('auth');
     }
-  }, [state.currentUser, state.currentDriver, state.userType, currentScreen]);
+  }, [currentUser, currentDriver, userType, currentScreen]);
 
-  // Reset local state when user logs out, but not when driver is active
+  // Reset local state when user logs out
   useEffect(() => {
     console.log('👤 Users Tab - Reset useEffect triggered:', {
-      hasCurrentUser: !!state.currentUser,
-      hasCurrentDriver: !!state.currentDriver,
-      userType: state.userType
+      hasCurrentUser: !!currentUser,
+      hasCurrentDriver: !!currentDriver,
+      userType: userType
     });
     
-    if (!state.currentUser && !state.currentDriver) {
+    if (!currentUser && !currentDriver) {
       console.log('👤 Users Tab - No users or drivers logged in, resetting to auth');
-      setAcceptedBid(null);
       setCurrentScreen('auth');
     }
-  }, [state.currentUser, state.currentDriver, state.userType]);
-
-  const handleLogin = (userData: UserData) => {
-    // Login is now handled by the auth component through AppContext
-    setCurrentScreen('booking');
-  };
-
-  const handleRegister = (userData: UserData) => {
-    // Registration is now handled by the auth component through AppContext
-    setCurrentScreen('booking');
-  };
-
-  const handleLogout = async () => {
-    // Reset local state first
-    setAcceptedBid(null);
-    setCurrentScreen('auth');
-    // Then call global logout
-    await logout();
-  };
-
-  const handleRideRequestCreated = () => {
-    // The request is now automatically available through AppContext
-    // Just switch to the bids screen
-    setCurrentScreen('bids');
-  };
-
-  const handleBidAccepted = (bid: Bid) => {
-    setAcceptedBid(bid);
-    setCurrentScreen('tracking');
-  };
-
-  const handleRideCompleted = () => {
-    setAcceptedBid(null);
-    setCurrentScreen('booking');
-  };
-
-  const handleRideCancelled = () => {
-    setAcceptedBid(null);
-    setCurrentScreen('booking');
-  };
-
-  const handleProfileUpdated = (updatedUser: UserData) => {
-    // Profile updates are now handled through AppContext
-    // The component will handle updating the stored user data
-  };
+  }, [currentUser, currentDriver, userType]);
 
   const renderNavigationTabs = () => {
     // Don't render navigation if driver is logged in or no user is logged in
-    if (!currentUser || state.currentDriver) return null;
+    if (!currentUser || currentDriver) return null;
 
     const tabs = [
-      { key: 'booking', label: 'Book Ride', icon: '🚗' },
+      { key: 'dashboard', label: 'Book Ride', icon: '🚗' },
       { key: 'bids', label: 'Bids', icon: '💰' },
       { key: 'tracking', label: 'Track', icon: '📍' },
       { key: 'history', label: 'History', icon: '📋' },
@@ -183,86 +151,83 @@ export default function HomeScreen() {
   };
 
   const renderCurrentScreen = () => {
-    // Don't render anything if a driver is logged in
-    if (state.currentDriver && !state.currentUser) {
+    // Don't render anything if a driver is logged in or no user is logged in
+    if (currentDriver && !currentUser) {
       console.log('👤 Users Tab - Driver is logged in, not rendering user screens');
       return null;
     }
 
     switch (currentScreen) {
       case 'auth':
-        return (
-          <LoginUser 
-            onLogin={handleLogin} 
-            onRegister={handleRegister}
-          />
-        );
+        return <LoginUser />;
       
-      case 'booking':
-        return (
-          <RideBooking
-            currentUser={currentUser}
-            onRideRequestCreated={handleRideRequestCreated}
-          />
-        );
+      case 'dashboard':
+        // If there's an active ride request, show cancellation interface instead of booking form
+        if (activeRideRequest) {
+          return (
+            <View style={styles.cancelContainer}>
+              <ThemedText style={[styles.cancelTitle, { color: theme.text }]}>
+                Active Ride Request
+              </ThemedText>
+              <View style={[styles.cancelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <ThemedText style={[styles.cancelStatus, { color: theme.primary }]}>
+                  Status: {activeRideRequest.status.charAt(0).toUpperCase() + activeRideRequest.status.slice(1)}
+                </ThemedText>
+                <ThemedText style={[styles.cancelRoute, { color: theme.text }]}>
+                  From: {activeRideRequest.pickupLocation.address}
+                </ThemedText>
+                <ThemedText style={[styles.cancelRoute, { color: theme.text }]}>
+                  To: {activeRideRequest.destination.address}
+                </ThemedText>
+                
+                <View style={styles.cancelActions}>
+                  <TouchableOpacity
+                    style={[styles.cancelButton, { backgroundColor: theme.danger }]}
+                    onPress={handleCancelRide}
+                  >
+                    <ThemedText style={styles.cancelButtonText}>Cancel Ride</ThemedText>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[styles.viewBidsButton, { backgroundColor: theme.primary }]}
+                    onPress={() => setCurrentScreen('bids')}
+                  >
+                    <ThemedText style={styles.viewBidsButtonText}>View Bids</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          );
+        }
+        return canCreateNewRide ? <RideBooking onRideRequestCreated={handleRideRequestCreated} /> : <View><ThemedText>No new ride requests can be created at this time.</ThemedText></View>;
       
       case 'bids':
-        return (
-          <BidDisplay
-            currentUser={currentUser}
-            currentRequest={currentRequest}
-            onBidAccepted={handleBidAccepted}
-          />
-        );
+        return <BidDisplay />;
       
       case 'tracking':
-        return (
-          <RideTracking
-            currentUser={currentUser}
-            currentRequest={currentRequest}
-            acceptedBid={acceptedBid || (currentRequest?.acceptedBid ? {
-              _id: currentRequest.acceptedBid.driverId,
-              driverId: currentRequest.acceptedBid.driverId,
-              fareAmount: currentRequest.acceptedBid.fareAmount,
-              bidTime: currentRequest.acceptedBid.bidTime,
-            } : null)}
-            onRideCompleted={handleRideCompleted}
-            onRideCancelled={handleRideCancelled}
-          />
-        );
+        return <RideTracking />;
       
       case 'history':
-        return <RideHistory currentUser={currentUser} />;
+        return <RideHistory />;
       
       case 'profile':
-        return (
-          <UserProfileManagement
-            currentUser={currentUser}
-            onProfileUpdated={handleProfileUpdated}
-            onLogout={handleLogout}
-          />
-        );
+        return <UserProfileManagement />;
       
       default:
-        return (
-          <LoginUser 
-            onLogin={handleLogin} 
-            onRegister={handleRegister}
-          />
-        );
+        return <LoginUser />;
     }
   };
 
   // Don't render anything if driver is logged in
-  if (state.currentDriver && !state.currentUser) {
+  if (currentDriver && !currentUser) {
     console.log('👤 Users Tab - Driver is logged in, not rendering anything');
     return null;
   }
 
   console.log('👤 Users Tab - About to render:', {
     currentScreen,
-    hasCurrentUser: !!state.currentUser,
-    userType: state.userType
+    hasCurrentUser: !!currentUser,
+    userType: userType
   });
 
   // For auth screen, use ParallaxScrollView with header image
@@ -291,7 +256,6 @@ export default function HomeScreen() {
     </SafeAreaView>
   );
 }
-
 
 const styles = StyleSheet.create({
   titleContainer: {
@@ -347,5 +311,60 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+  },
+  // New styles for ride cancellation interface
+  cancelContainer: {
+    flex: 1,
+    padding: 20,
+  },
+  cancelTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  cancelCard: {
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  cancelStatus: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  cancelRoute: {
+    fontSize: 16,
+    marginBottom: 8,
+    lineHeight: 24,
+  },
+  cancelActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  viewBidsButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  viewBidsButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

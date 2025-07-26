@@ -1,567 +1,263 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
-  ActivityIndicator,
-  RefreshControl,
-  Alert,
+  SafeAreaView,
+  View,
+  StyleProp,
+  ViewStyle,
+  TouchableOpacity,
 } from 'react-native';
-import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { useApp } from '@/contexts/AppContext';
+import { RideHistoryRide } from '@/types/types';
+
+// --- Animation & Icon Libraries ---
+import Animated, {
+  FadeInDown,
+  LinearTransition,
+  useAnimatedStyle,
+  withTiming,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import {
-  API_BASE_URL,
-  API_ENDPOINTS,
-  RIDE_STATUS,
-  STATUS_COLORS,
-  ERROR_MESSAGES,
-  UserData,
-  RideRequest,
-} from '@/utils/userConstants';
+  MapPin,
+  ArrowRight,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Car,
+  ChevronDown,
+  History,
+} from 'lucide-react-native';
 
-interface RideHistoryProps {
-  currentUser: UserData | null;
-}
+// --- Type Definitions ---
+type AnimatedPressableProps = {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  onPress?: () => void;
+  entering?: any; // Add entering property to the type
+};
 
-interface RideHistoryItem extends RideRequest {
-  finalFare?: number;
-  driverName?: string;
-  driverId?: string;
-  completedAt?: string;
-  rating?: number;
-}
-
-export default function RideHistory({ currentUser }: RideHistoryProps) {
-  const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? 'light'];
-  
-  const [rideHistory, setRideHistory] = useState<RideHistoryItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [expandedRide, setExpandedRide] = useState<string | null>(null);
-
-  const fetchRideHistory = useCallback(async () => {
-    if (!currentUser?.userId) {
-      Alert.alert('Error', ERROR_MESSAGES.NO_USER_LOGGED_IN);
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}${API_ENDPOINTS.USER_RIDE_HISTORY(currentUser.userId)}`
-      );
-      const data = await response.json();
-
-      if (data.success) {
-        // Sort by creation date, most recent first
-        const sortedHistory = (data.data || []).sort((a: RideHistoryItem, b: RideHistoryItem) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setRideHistory(sortedHistory);
-      } else {
-        console.error('Error fetching ride history:', data.message);
-        Alert.alert('Error', data.message || ERROR_MESSAGES.GENERAL_ERROR);
+// --- Reusable Animated Components ---
+const AnimatedPressable = ({ children, style, onPress, entering }: AnimatedPressableProps) => (
+  <GestureDetector
+    gesture={Gesture.Tap().onEnd((event, success) => {
+      if (success && onPress) {
+        onPress();
       }
-    } catch (error) {
-      console.error('Error fetching ride history:', error);
-      Alert.alert('Error', ERROR_MESSAGES.NETWORK_ERROR);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [currentUser?.userId]);
+    })}
+  >
+    <Animated.View style={style} entering={entering}>
+      {children}
+    </Animated.View>
+  </GestureDetector>
+);
 
-  useEffect(() => {
-    if (currentUser) {
-      fetchRideHistory();
-    }
-  }, [currentUser, fetchRideHistory]);
-
-  const refreshHistory = async () => {
-    setIsRefreshing(true);
-    await fetchRideHistory();
-    setIsRefreshing(false);
-  };
-
-  const getStatusColor = (status: string): string => {
-    switch (status) {
-      case RIDE_STATUS.COMPLETED:
-        return STATUS_COLORS.success;
-      case RIDE_STATUS.CANCELLED:
-        return STATUS_COLORS.error;
-      case RIDE_STATUS.IN_PROGRESS:
-        return STATUS_COLORS.warning;
-      case RIDE_STATUS.ASSIGNED:
-        return STATUS_COLORS.info;
-      default:
-        return STATUS_COLORS.info;
-    }
-  };
-
-  const getStatusIcon = (status: string): string => {
-    switch (status) {
-      case RIDE_STATUS.COMPLETED:
-        return '✅';
-      case RIDE_STATUS.CANCELLED:
-        return '❌';
-      case RIDE_STATUS.IN_PROGRESS:
-        return '🚗';
-      case RIDE_STATUS.ASSIGNED:
-        return '👤';
-      case RIDE_STATUS.PENDING:
-        return '⏳';
-      default:
-        return '📋';
-    }
-  };
-
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatDuration = (createdAt: string, completedAt?: string): string => {
-    if (!completedAt) return 'N/A';
-    
-    const start = new Date(createdAt);
-    const end = new Date(completedAt);
-    const durationMs = end.getTime() - start.getTime();
-    const durationMinutes = Math.round(durationMs / (1000 * 60));
-    
-    if (durationMinutes < 60) {
-      return `${durationMinutes} min`;
-    } else {
-      const hours = Math.floor(durationMinutes / 60);
-      const minutes = durationMinutes % 60;
-      return `${hours}h ${minutes}m`;
-    }
-  };
-
-  const calculateTotalSpent = (): number => {
-    return rideHistory
-      .filter(ride => ride.status === RIDE_STATUS.COMPLETED)
-      .reduce((total, ride) => total + (ride.finalFare || 0), 0);
-  };
-
-  const getCompletedRidesCount = (): number => {
-    return rideHistory.filter(ride => ride.status === RIDE_STATUS.COMPLETED).length;
-  };
-
-  const toggleRideExpansion = (rideId: string) => {
-    setExpandedRide(expandedRide === rideId ? null : rideId);
-  };
-
-  const renderRideItem = (ride: RideHistoryItem) => {
-    const isExpanded = expandedRide === ride._id;
-    
-    return (
-      <TouchableOpacity
-        style={[
-          styles.rideItem,
-          { borderColor: theme.text, backgroundColor: theme.background }
-        ]}
-        onPress={() => toggleRideExpansion(ride._id)}
-        activeOpacity={0.7}
-      >
-        {/* Header Row */}
-        <View style={styles.rideHeader}>
-          <View style={styles.statusContainer}>
-            <ThemedText style={styles.statusIcon}>{getStatusIcon(ride.status)}</ThemedText>
-            <View style={[
-              styles.statusBadge,
-              { backgroundColor: getStatusColor(ride.status) }
-            ]}>
-              <Text style={styles.statusText}>{ride.status.toUpperCase()}</Text>
-            </View>
-          </View>
-          <ThemedText style={styles.rideDate}>
-            {formatDate(ride.createdAt)}
-          </ThemedText>
-        </View>
-
-        {/* Route Information */}
-        <View style={styles.routeContainer}>
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: STATUS_COLORS.success }]} />
-            <ThemedText style={styles.routeText} numberOfLines={1}>
-              {ride.pickupLocation.address}
-            </ThemedText>
-          </View>
-          <View style={styles.routeLine} />
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: STATUS_COLORS.error }]} />
-            <ThemedText style={styles.routeText} numberOfLines={1}>
-              {ride.destination.address}
-            </ThemedText>
-          </View>
-        </View>
-
-        {/* Basic Info */}
-        <View style={styles.basicInfo}>
-          <ThemedText style={styles.requestId}>
-            ID: {ride._id}
-          </ThemedText>
-          {ride.finalFare && (
-            <ThemedText style={styles.fareAmount}>
-              ₹{String(ride.finalFare)}
-            </ThemedText>
-          )}
-        </View>
-
-        {/* Expanded Details */}
-        {isExpanded && (
-          <View style={[styles.expandedDetails, { borderTopColor: theme.text }]}>
-            {ride.driverName && (
-              <View style={styles.detailRow}>
-                <ThemedText style={styles.detailLabel}>Driver:</ThemedText>
-                <ThemedText style={styles.detailValue}>{ride.driverName}</ThemedText>
-              </View>
-            )}
-            
-            {ride.driverId && (
-              <View style={styles.detailRow}>
-                <ThemedText style={styles.detailLabel}>Driver ID:</ThemedText>
-                <ThemedText style={styles.detailValue}>{ride.driverId}</ThemedText>
-              </View>
-            )}
-
-            {ride.estimatedDistance && (
-              <View style={styles.detailRow}>
-                <ThemedText style={styles.detailLabel}>Distance:</ThemedText>
-                <ThemedText style={styles.detailValue}>{String(ride.estimatedDistance)} km</ThemedText>
-              </View>
-            )}
-
-            {ride.estimatedDuration && (
-              <View style={styles.detailRow}>
-                <ThemedText style={styles.detailLabel}>Est. Duration:</ThemedText>
-                <ThemedText style={styles.detailValue}>{String(ride.estimatedDuration)} min</ThemedText>
-              </View>
-            )}
-
-            {ride.completedAt && (
-              <View style={styles.detailRow}>
-                <ThemedText style={styles.detailLabel}>Completed:</ThemedText>
-                <ThemedText style={styles.detailValue}>
-                  {formatDate(ride.completedAt)}
-                </ThemedText>
-              </View>
-            )}
-
-            <View style={styles.detailRow}>
-              <ThemedText style={styles.detailLabel}>Duration:</ThemedText>
-              <ThemedText style={styles.detailValue}>
-                {formatDuration(ride.createdAt, ride.completedAt)}
-              </ThemedText>
-            </View>
-
-            {ride.rating && (
-              <View style={styles.detailRow}>
-                <ThemedText style={styles.detailLabel}>Your Rating:</ThemedText>
-                <ThemedText style={styles.detailValue}>
-                  {'⭐'.repeat(ride.rating)} ({String(ride.rating)}/5)
-                </ThemedText>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Expansion Indicator */}
-        <View style={styles.expansionIndicator}>
-          <ThemedText style={styles.expansionArrow}>
-            {isExpanded ? '▲' : '▼'}
-          </ThemedText>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderSummaryStats = () => {
-    const totalSpent = calculateTotalSpent();
-    const completedRides = getCompletedRidesCount();
-    const cancelledRides = rideHistory.filter(ride => ride.status === RIDE_STATUS.CANCELLED).length;
-    
-    return (
-      <ThemedView style={[styles.summaryContainer, { borderColor: theme.text }]}>
-        <ThemedText style={styles.summaryTitle}>Ride Summary</ThemedText>
-        
-        <View style={styles.summaryGrid}>
-          <View style={styles.summaryItem}>
-            <ThemedText style={styles.summaryNumber}>{rideHistory.length}</ThemedText>
-            <ThemedText style={styles.summaryLabel}>Total Rides</ThemedText>
-          </View>
-          
-          <View style={styles.summaryItem}>
-            <ThemedText style={styles.summaryNumber}>{completedRides}</ThemedText>
-            <ThemedText style={styles.summaryLabel}>Completed</ThemedText>
-          </View>
-          
-          <View style={styles.summaryItem}>
-            <ThemedText style={styles.summaryNumber}>{cancelledRides}</ThemedText>
-            <ThemedText style={styles.summaryLabel}>Cancelled</ThemedText>
-          </View>
-          
-          <View style={styles.summaryItem}>
-            <ThemedText style={styles.summaryNumber}>${totalSpent.toFixed(2)}</ThemedText>
-            <ThemedText style={styles.summaryLabel}>Total Spent</ThemedText>
-          </View>
-        </View>
-      </ThemedView>
-    );
-  };
-
-  if (!currentUser) {
-    return (
-      <ThemedView style={styles.container}>
-        <ThemedText style={styles.noDataText}>
-          Please login to view ride history
-        </ThemedText>
-      </ThemedView>
-    );
-  }
+const SummaryCard = ({ history }: { history: RideHistoryRide[] }) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  const totalSpent = history
+    .filter(r => r.status === 'completed')
+    .reduce((sum, r) => sum + r.finalFare, 0);
+  const completedRides = history.filter(r => r.status === 'completed').length;
 
   return (
-    <ThemedView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContainer}
-        refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={refreshHistory} />
-        }
-        showsVerticalScrollIndicator={false}
+    <Animated.View
+      entering={FadeInDown.duration(500)}
+      style={[styles.summaryCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+    >
+      <View style={styles.summaryItem}>
+        <ThemedText style={styles.summaryValue}>₹{totalSpent.toFixed(2)}</ThemedText>
+        <ThemedText style={styles.summaryLabel}>Total Spent</ThemedText>
+      </View>
+      <View style={styles.summaryDivider} />
+      <View style={styles.summaryItem}>
+        <ThemedText style={styles.summaryValue}>{completedRides}</ThemedText>
+        <ThemedText style={styles.summaryLabel}>Completed Rides</ThemedText>
+      </View>
+    </Animated.View>
+  );
+};
+
+const RideHistoryCard = ({ item, index }: { item: RideHistoryRide; index: number }) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  const [isExpanded, setIsExpanded] = useState(false);
+  const isCompleted = item.status === 'completed';
+
+  const rotation = useAnimatedStyle(() => ({
+    transform: [{ rotate: withTiming(isExpanded ? '180deg' : '0deg') }],
+  }));
+
+  return (
+    <Animated.View layout={LinearTransition.springify()}>
+      <AnimatedPressable
+        onPress={() => setIsExpanded(!isExpanded)}
+        entering={FadeInDown.delay(index * 150).duration(600)}
+        style={[styles.rideCard, { backgroundColor: theme.card, borderColor: theme.border }]}
       >
-        <ThemedText style={styles.title}>Ride History</ThemedText>
-
-        {/* Summary Statistics */}
-        {rideHistory.length > 0 && renderSummaryStats()}
-
-        {/* Loading State */}
-        {isLoading && (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.tint} />
-            <ThemedText style={styles.loadingText}>Loading ride history...</ThemedText>
+        <View style={styles.rideHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+            {isCompleted ? (
+              <CheckCircle color="#28a745" size={22} />
+            ) : (
+              <XCircle color="#dc3545" size={22} />
+            )}
+            <View style={{ marginLeft: 12, flex: 1 }}>
+              <ThemedText style={styles.routeMainText} numberOfLines={1}>{item.destinationAddress}</ThemedText>
+              <ThemedText style={styles.routeSubText}>
+                {new Date(item.timestamp).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+              </ThemedText>
+            </View>
           </View>
+          <ThemedText style={styles.fareText}>
+            {isCompleted ? `₹${item.finalFare.toFixed(2)}` : 'Cancelled'}
+          </ThemedText>
+        </View>
+        {isExpanded && (
+          <Animated.View entering={FadeInDown} style={styles.expandedDetails}>
+            <View style={styles.detailRow}>
+                <MapPin size={16} color={theme.textSecondary} />
+                <ThemedText style={styles.detailText}>From: {item.pickupAddress}</ThemedText>
+            </View>
+            <View style={styles.detailRow}>
+                <Car size={16} color={theme.textSecondary} />
+                <ThemedText style={styles.detailText}>Driver: {item.driverName}</ThemedText>
+            </View>
+             <View style={styles.detailRow}>
+                <Clock size={16} color={theme.textSecondary} />
+                <ThemedText style={styles.detailText}>Duration: {item.duration}</ThemedText>
+            </View>
+          </Animated.View>
         )}
+        <Animated.View style={[styles.chevron, rotation]}>
+            <ChevronDown color={theme.textSecondary} size={20} />
+        </Animated.View>
+      </AnimatedPressable>
+    </Animated.View>
+  );
+};
 
-        {/* Empty State */}
-        {!isLoading && rideHistory.length === 0 && (
-          <ThemedView style={[styles.emptyContainer, { borderColor: theme.text }]}>
-            <ThemedText style={styles.emptyIcon}>🚗</ThemedText>
-            <ThemedText style={styles.emptyTitle}>No Rides Yet</ThemedText>
-            <ThemedText style={styles.emptyMessage}>
-              Your ride history will appear here once you start booking rides.
-            </ThemedText>
-          </ThemedView>
-        )}
+const EmptyHistory = () => {
+    const theme = Colors[useColorScheme() ?? 'light'];
+    return (
+      <Animated.View entering={FadeInDown.duration(800)} style={styles.emptyContainer}>
+          <History color={theme.textSecondary} size={48} />
+          <ThemedText style={styles.emptyTitle}>No Rides Yet</ThemedText>
+          <ThemedText style={styles.emptySubtitle}>
+              Your past trips will be shown here. Time to book your first ride!
+          </ThemedText>
+      </Animated.View>
+    )
+  }
 
-        {/* Ride History List */}
-        {!isLoading && rideHistory.length > 0 && (
-          <View style={styles.historyList}>
-            {rideHistory.map((ride) => (
-              <View key={ride._id}>
-                {renderRideItem(ride)}
-              </View>
-            ))}
-          </View>
-        )}
-      </ScrollView>
-    </ThemedView>
+// --- Main Screen Component ---
+export default function RideHistoryScreen() {
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const { rideHistory, fetchRideHistory } = useApp();
+
+  useEffect(() => {
+    fetchRideHistory();
+  }, [fetchRideHistory]);
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+        <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+          <Animated.View entering={FadeInDown.duration(400)}>
+            <ThemedText style={styles.headerTitle}>Ride History</ThemedText>
+          </Animated.View>
+
+          {rideHistory.length > 0 ? (
+            <>
+              <SummaryCard history={rideHistory} />
+              <Animated.View entering={FadeInDown.delay(200).duration(500)}>
+                <ThemedText style={styles.sectionTitle}>Recent Trips</ThemedText>
+              </Animated.View>
+              {rideHistory.map((ride, index) => (
+                <RideHistoryCard key={ride.rideId} item={ride} index={index} />
+              ))}
+            </>
+          ) : (
+            <EmptyHistory />
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
+// --- Stylesheet ---
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContainer: {
-    padding: 20,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  summaryContainer: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-  },
-  summaryTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  summaryGrid: {
+  safeArea: { flex: 1 },
+  scrollContainer: { padding: 16, paddingBottom: 40 },
+  headerTitle: { fontSize: 28, fontWeight: 'bold', marginBottom: 16 },
+  summaryCard: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  summaryItem: {
-    width: '48%',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  summaryNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  summaryLabel: {
-    fontSize: 12,
-    opacity: 0.7,
-    textAlign: 'center',
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    padding: 40,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-  },
-  emptyContainer: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 40,
-    alignItems: 'center',
   },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptyMessage: {
-    fontSize: 14,
-    opacity: 0.7,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  historyList: {
-    gap: 12,
-  },
-  rideItem: {
-    borderWidth: 1,
-    borderRadius: 12,
+  summaryItem: { flex: 1, alignItems: 'center' },
+  summaryValue: { fontSize: 22, fontWeight: 'bold' },
+  summaryLabel: { fontSize: 12, opacity: 0.7, marginTop: 4 },
+  summaryDivider: { width: 1, backgroundColor: '#eee', marginHorizontal: 16 },
+  sectionTitle: { fontSize: 20, fontWeight: '700', marginBottom: 16 },
+  rideCard: {
+    borderRadius: 16,
     padding: 16,
-    position: 'relative',
+    marginBottom: 12,
+    borderWidth: 1,
   },
   rideHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
   },
-  statusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statusIcon: {
-    fontSize: 20,
-    marginRight: 8,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  rideDate: {
-    fontSize: 12,
-    opacity: 0.7,
-  },
-  routeContainer: {
-    marginBottom: 12,
-  },
-  routePoint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  routeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 12,
-  },
-  routeLine: {
-    width: 1,
-    height: 20,
-    backgroundColor: '#ccc',
-    marginLeft: 4,
-    marginBottom: 4,
-  },
-  routeText: {
-    flex: 1,
-    fontSize: 14,
-  },
-  basicInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  requestId: {
-    fontSize: 12,
-    opacity: 0.7,
-  },
-  fareAmount: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  routeMainText: { fontSize: 16, fontWeight: '600' },
+  routeSubText: { fontSize: 12, opacity: 0.6, marginTop: 2 },
+  fareText: { fontSize: 16, fontWeight: 'bold' },
   expandedDetails: {
+    marginTop: 16,
+    paddingTop: 16,
     borderTopWidth: 1,
-    paddingTop: 12,
-    marginTop: 8,
+    borderColor: '#eee',
   },
   detailRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
   },
-  detailLabel: {
+  detailText: {
     fontSize: 14,
-    fontWeight: '500',
-    flex: 1,
+    marginLeft: 12,
+    opacity: 0.8,
   },
-  detailValue: {
-    fontSize: 14,
-    flex: 1,
-    textAlign: 'right',
-  },
-  expansionIndicator: {
+  chevron: {
     position: 'absolute',
-    bottom: 8,
     right: 16,
+    top: 18,
   },
-  expansionArrow: {
-    fontSize: 12,
-    opacity: 0.5,
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 20,
   },
-  noDataText: {
-    fontSize: 16,
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 14,
     textAlign: 'center',
-    marginTop: 50,
     opacity: 0.7,
+    lineHeight: 20,
   },
 });

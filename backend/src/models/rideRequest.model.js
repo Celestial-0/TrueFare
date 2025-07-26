@@ -102,6 +102,22 @@ const rideRequestSchema = new mongoose.Schema({
         bidTime: {
             type: Date,
             default: Date.now
+        },
+        status: {
+            type: String,
+            enum: ['pending', 'accepted', 'rejected'],
+            default: 'pending'
+        },
+        estimatedArrival: {
+            type: Number, // in minutes
+            min: 1,
+            max: 120
+        },
+        acceptedAt: {
+            type: Date
+        },
+        rejectedAt: {
+            type: Date
         }
     }],
     acceptedBid: {
@@ -164,6 +180,58 @@ rideRequestSchema.methods.getSortedBids = function(sortBy = 'fare', order = 'asc
     }
     
     return bids;
+};
+
+// Method to accept a bid and update statuses
+rideRequestSchema.methods.acceptBid = function(bidId) {
+    // Find the bid to accept
+    const bidToAccept = this.bids.id(bidId);
+    if (!bidToAccept) {
+        throw new Error('Bid not found');
+    }
+    
+    // Check if bid is still pending
+    if (bidToAccept.status !== 'pending') {
+        throw new Error(`Cannot accept bid: Bid status is ${bidToAccept.status}`);
+    }
+    
+    // Check if ride request is in bidding status
+    if (this.status !== 'bidding') {
+        throw new Error(`Cannot accept bid: Ride request status is ${this.status}`);
+    }
+    
+    // Update ride request status
+    this.status = 'accepted';
+    
+    // Set the accepted bid
+    this.acceptedBid = {
+        driverId: bidToAccept.driverId,
+        fareAmount: bidToAccept.fareAmount,
+        bidTime: bidToAccept.bidTime
+    };
+    
+    // Update bid statuses
+    this.bids.forEach(bid => {
+        if (bid._id.toString() === bidId) {
+            bid.status = 'accepted';
+            bid.acceptedAt = new Date();
+        } else if (bid.status === 'pending') {
+            bid.status = 'rejected';
+            bid.rejectedAt = new Date();
+        }
+    });
+    
+    return this.save();
+};
+
+// Method to get pending bids
+rideRequestSchema.methods.getPendingBids = function() {
+    return this.bids.filter(bid => bid.status === 'pending');
+};
+
+// Method to get accepted bid
+rideRequestSchema.methods.getAcceptedBid = function() {
+    return this.bids.find(bid => bid.status === 'accepted');
 };
 
 export default mongoose.model('RideRequest', rideRequestSchema);

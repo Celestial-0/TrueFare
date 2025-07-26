@@ -1,477 +1,313 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
-  Text,
-  ScrollView,
-  StyleSheet,
   TextInput,
-  TouchableOpacity,
-  Alert,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  StyleSheet,
+  StyleProp,
+  ViewStyle,
+  Pressable,
+  TouchableOpacity, // Added for back button
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Picker } from '@react-native-picker/picker';
-import { ThemedView } from '@/components/ThemedView';
-import { ThemedText } from '@/components/ThemedText';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import {
-  API_BASE_URL,
-  API_ENDPOINTS,
-  ERROR_MESSAGES,
-  SUCCESS_MESSAGES,
-  VALIDATION,
-  PLACEHOLDERS,
-  VEHICLE_MAKES,
-  VEHICLE_COLORS,
-  DriverData,
-  VehicleInfo,
-} from '@/utils/driverConstants';
-import { parseVehicleYear } from '@/utils/constants';
+import { ThemedText } from '@/components/ThemedText';
+import { ThemedView } from '@/components/ThemedView';
 
-interface VehicleInfoManagementProps {
-  currentDriver: DriverData | null;
-  onBackToDashboard?: () => void;
-  onVehicleUpdated?: (vehicleInfo: VehicleInfo) => void;
-}
+// --- Animation & Icon Libraries ---
+// Make sure to install these: yarn add react-native-reanimated lucide-react-native
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { Car, Calendar, Palette, Hash } from 'lucide-react-native';
 
-export default function VehicleInfoManagement({
-  currentDriver,
-  onBackToDashboard,
-  onVehicleUpdated,
-}: VehicleInfoManagementProps) {
+// --- Constants ---
+const SPACING = 16;
+
+// --- Type Definitions ---
+type VehicleInfo = {
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  licensePlate: string;
+};
+
+type AnimatedPressableProps = {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  onPress?: () => void;
+};
+
+type FormInputProps = {
+  label: string;
+  icon: React.ElementType;
+  placeholder: string;
+  value: string;
+  index: number;
+};
+
+type VehicleInfoManagementProps = {
+  onBackToDashboard: () => void;
+};
+
+// --- Mock Data ---
+const MOCK_VEHICLE_INFO: VehicleInfo = {
+  make: 'Toyota',
+  model: 'Camry',
+  year: 2023,
+  color: 'Silver',
+  licensePlate: 'DL12AB1234',
+};
+
+// --- Reusable Animated Components (Revamped) ---
+
+/**
+ * An animated pressable component using Reanimated and the built-in Pressable.
+ * It provides tactile feedback by scaling down on press, without gesture-handler.
+ */
+const AnimatedPressable = ({ children, style, onPress }: AnimatedPressableProps) => {
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const onPressIn = () => {
+    scale.value = withTiming(0.97, { duration: 150 });
+  };
+
+  const onPressOut = () => {
+    scale.value = withTiming(1, { duration: 200 });
+  };
+
+  return (
+    <Pressable onPress={onPress} onPressIn={onPressIn} onPressOut={onPressOut}>
+      <Animated.View style={[style, animatedStyle]}>{children}</Animated.View>
+    </Pressable>
+  );
+};
+
+/**
+ * A form input with a subtle focus animation on its border.
+ */
+const FormInput = ({ label, icon: Icon, placeholder, value, index }: FormInputProps) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  const [isFocused, setIsFocused] = useState(false);
+
+  const animatedContainerStyle = useAnimatedStyle(() => {
+    const borderColor = withTiming(isFocused ? theme.primary : theme.border, {
+      duration: 250,
+    });
+    return { borderColor };
+  });
+
+  return (
+    <Animated.View entering={FadeInDown.delay(index * 100).duration(600)}>
+      <ThemedText style={styles.label}>{label}</ThemedText>
+      <Animated.View style={[styles.inputContainer, { backgroundColor: theme.card }, animatedContainerStyle]}>
+        <Icon color={theme.textSecondary} size={20} />
+        <TextInput
+          placeholder={placeholder}
+          placeholderTextColor={theme.textSecondary}
+          style={[styles.input, { color: theme.text }]}
+          value={value}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+        />
+      </Animated.View>
+    </Animated.View>
+  );
+};
+
+const CurrentVehicleCard = ({ vehicle }: { vehicle: VehicleInfo }) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  return (
+    <Animated.View
+      entering={FadeIn.duration(600)}
+      style={[styles.currentVehicleContainer, { backgroundColor: theme.card, borderColor: theme.border }]}
+    >
+      <ThemedText style={styles.currentVehicleTitle}>Current Vehicle</ThemedText>
+      <View style={styles.vehicleDetailRow}>
+        <ThemedText style={[styles.vehicleDetailValue, { color: theme.text }]}>
+          {vehicle.year} {vehicle.make} {vehicle.model}
+        </ThemedText>
+        <ThemedText style={[styles.vehicleDetailLabel, { color: theme.textSecondary }]}>
+          {vehicle.licensePlate}
+        </ThemedText>
+      </View>
+    </Animated.View>
+  );
+};
+
+// --- Main Screen Component (Revamped) ---
+export default function VehicleInfoManagementScreen({ onBackToDashboard }: VehicleInfoManagementProps) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
 
-  const [isSaving, setIsSaving] = useState(false);
-  const [vehicleInfo, setVehicleInfo] = useState<VehicleInfo>({
-    make: '',
-    model: '',
-    year: undefined,
-    color: '',
-    licensePlate: '',
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  const styles = StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: theme.background,
-    },
-    safeArea: {
-      flex: 1,
-      backgroundColor: theme.background,
-    },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: 16,
-      backgroundColor: theme.tint + '15',
-    },
-    backButton: {
-      backgroundColor: theme.tint,
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      borderRadius: 8,
-      marginRight: 16,
-    },
-    backButtonText: {
-      color: 'white',
-      fontWeight: 'bold',
-    },
-    headerTitle: {
-      fontSize: 20,
-      fontWeight: 'bold',
-      color: theme.text,
-      flex: 1,
-    },
-    scrollContainer: {
-      padding: 16,
-    },
-    sectionTitle: {
-      fontSize: 18,
-      fontWeight: 'bold',
-      color: theme.text,
-      marginBottom: 16,
-    },
-    formGroup: {
-      marginBottom: 20,
-    },
-    label: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: theme.text,
-      marginBottom: 8,
-    },
-    input: {
-      borderWidth: 1,
-      borderColor: theme.tint + '50',
-      borderRadius: 8,
-      padding: 12,
-      fontSize: 16,
-      color: theme.text,
-      backgroundColor: theme.background,
-    },
-    inputError: {
-      borderColor: '#dc3545',
-    },
-    picker: {
-      borderWidth: 1,
-      borderColor: theme.tint + '50',
-      borderRadius: 8,
-      backgroundColor: theme.background,
-    },
-    pickerError: {
-      borderColor: '#dc3545',
-    },
-    errorText: {
-      fontSize: 12,
-      color: '#dc3545',
-      marginTop: 4,
-    },
-    currentVehicleContainer: {
-      backgroundColor: theme.tint + '10',
-      padding: 16,
-      borderRadius: 12,
-      marginBottom: 20,
-    },
-    currentVehicleTitle: {
-      fontSize: 16,
-      fontWeight: 'bold',
-      color: theme.text,
-      marginBottom: 12,
-    },
-    vehicleDetail: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: 8,
-    },
-    vehicleDetailLabel: {
-      fontSize: 14,
-      color: theme.text,
-      opacity: 0.7,
-    },
-    vehicleDetailValue: {
-      fontSize: 14,
-      color: theme.text,
-      fontWeight: '500',
-    },
-    saveButton: {
-      backgroundColor: theme.tint,
-      padding: 16,
-      borderRadius: 12,
-      alignItems: 'center',
-      marginTop: 20,
-    },
-    saveButtonDisabled: {
-      backgroundColor: '#ccc',
-      opacity: 0.6,
-    },
-    saveButtonText: {
-      color: 'white',
-      fontWeight: 'bold',
-      fontSize: 16,
-    },
-    loadingContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    infoText: {
-      fontSize: 14,
-      color: theme.text,
-      opacity: 0.7,
-      marginBottom: 20,
-      fontStyle: 'italic',
-    },
-    requiredIndicator: {
-      color: '#dc3545',
-    },
-  });
-
-  // Validation function
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {};
-
-    if (!vehicleInfo.make?.trim()) {
-      newErrors.make = 'Vehicle make is required';
-    }
-
-    if (!vehicleInfo.model?.trim()) {
-      newErrors.model = 'Vehicle model is required';
-    }
-
-    if (vehicleInfo.year) {
-      if (
-        vehicleInfo.year < VALIDATION.MIN_VEHICLE_YEAR ||
-        vehicleInfo.year > VALIDATION.MAX_VEHICLE_YEAR
-      ) {
-        newErrors.year = `Year must be between ${VALIDATION.MIN_VEHICLE_YEAR} and ${VALIDATION.MAX_VEHICLE_YEAR}`;
-      }
-    }
-
-    if (vehicleInfo.licensePlate && !VALIDATION.LICENSE_PLATE_REGEX.test(vehicleInfo.licensePlate)) {
-      newErrors.licensePlate = 'Please enter a valid license plate number';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  // Save vehicle info
-  const saveVehicleInfo = async () => {
-    if (!currentDriver?.driverId) {
-      Alert.alert('Error', ERROR_MESSAGES.NO_DRIVER_LOGGED_IN);
-      return;
-    }
-
-    if (!validateForm()) {
-      Alert.alert('Validation Error', 'Please correct the errors and try again.');
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}${API_ENDPOINTS.UPDATE_VEHICLE_INFO(currentDriver.driverId)}`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vehicleInfo }),
-        }
-      );
-
-      if (response.ok) {
-        await response.json();
-        Alert.alert('Success', SUCCESS_MESSAGES.VEHICLE_INFO_UPDATED);
-        onVehicleUpdated?.(vehicleInfo);
-        
-        // Update the current driver's vehicle info
-        if (currentDriver) {
-          currentDriver.vehicleInfo = vehicleInfo;
-        }
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update vehicle information');
-      }
-    } catch (error) {
-      console.error('Error updating vehicle info:', error);
-      Alert.alert('Error', ERROR_MESSAGES.NETWORK_ERROR);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Initialize on mount
-  useEffect(() => {
-    if (currentDriver?.vehicleInfo) {
-      setVehicleInfo({
-        make: currentDriver.vehicleInfo.make || '',
-        model: currentDriver.vehicleInfo.model || '',
-        year: currentDriver.vehicleInfo.year || undefined,
-        color: currentDriver.vehicleInfo.color || '',
-        licensePlate: currentDriver.vehicleInfo.licensePlate || '',
-      });
-    }
-  }, [currentDriver?.vehicleInfo]);
-
-  if (!currentDriver) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.container}>
-          <ThemedText style={styles.errorText}>
-            No driver logged in. Please login first.
-          </ThemedText>
-        </ThemedView>
-      </SafeAreaView>
-    );
-  }
+  const formFields = [
+    { label: "Vehicle Make", icon: Car, placeholder: "e.g., Toyota", value: MOCK_VEHICLE_INFO.make },
+    { label: "Model", icon: Car, placeholder: "e.g., Camry", value: MOCK_VEHICLE_INFO.model },
+    { label: "Year", icon: Calendar, placeholder: "e.g., 2023", value: String(MOCK_VEHICLE_INFO.year) },
+    { label: "Color", icon: Palette, placeholder: "e.g., Silver", value: MOCK_VEHICLE_INFO.color },
+    { label: "License Plate", icon: Hash, placeholder: "e.g., DL12AB1234", value: MOCK_VEHICLE_INFO.licensePlate },
+  ];
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <ThemedView style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={onBackToDashboard}>
-            <Text style={[styles.backButtonText, { color: colorScheme === 'dark' ? '#000000' : '#FFFFFF' }]}>← Back</Text>
+        <View style={styles.headerContainer}>
+          <TouchableOpacity onPress={onBackToDashboard} style={styles.backButton}>
+            <ThemedText style={[styles.backButtonText, { color: theme.text }]}>←</ThemedText>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Vehicle Information</Text>
+          <ThemedText style={styles.headerTitle}>Manage Vehicle</ThemedText>
+          <View style={styles.headerSpacer} />
         </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView style={styles.scrollContainer}>
-          {/* Current Vehicle Info */}
-          {currentDriver.vehicleInfo && (
-            <View style={styles.currentVehicleContainer}>
-              <Text style={styles.currentVehicleTitle}>Current Vehicle</Text>
-              
-              <View style={styles.vehicleDetail}>
-                <Text style={styles.vehicleDetailLabel}>Make:</Text>
-                <Text style={styles.vehicleDetailValue}>
-                  {currentDriver.vehicleInfo.make || 'Not specified'}
-                </Text>
-              </View>
-              
-              <View style={styles.vehicleDetail}>
-                <Text style={styles.vehicleDetailLabel}>Model:</Text>
-                <Text style={styles.vehicleDetailValue}>
-                  {currentDriver.vehicleInfo.model || 'Not specified'}
-                </Text>
-              </View>
-              
-              <View style={styles.vehicleDetail}>
-                <Text style={styles.vehicleDetailLabel}>Year:</Text>
-                <Text style={styles.vehicleDetailValue}>
-                  {currentDriver.vehicleInfo.year || 'Not specified'}
-                </Text>
-              </View>
-              
-              <View style={styles.vehicleDetail}>
-                <Text style={styles.vehicleDetailLabel}>Color:</Text>
-                <Text style={styles.vehicleDetailValue}>
-                  {currentDriver.vehicleInfo.color || 'Not specified'}
-                </Text>
-              </View>
-              
-              <View style={styles.vehicleDetail}>
-                <Text style={styles.vehicleDetailLabel}>License Plate:</Text>
-                <Text style={styles.vehicleDetailValue}>
-                  {currentDriver.vehicleInfo.licensePlate || 'Not specified'}
-                </Text>
-              </View>
+        <KeyboardAwareScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContentContainer}
+        >
+          <View style={styles.content}>
+            <CurrentVehicleCard vehicle={MOCK_VEHICLE_INFO} />
+
+            <ThemedText style={styles.sectionTitle}>Update Information</ThemedText>
+            
+            <View style={styles.formContainer}>
+              {formFields.map((field, index) => (
+                <FormInput
+                  key={field.label}
+                  index={index}
+                  label={field.label}
+                  icon={field.icon}
+                  placeholder={field.placeholder}
+                  value={field.value}
+                />
+              ))}
             </View>
-          )}
 
-          <Text style={styles.sectionTitle}>Update Vehicle Information</Text>
-          <Text style={styles.infoText}>
-            Keep your vehicle information up to date for better service.
-          </Text>
-
-          {/* Vehicle Make */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>
-              Vehicle Make <Text style={styles.requiredIndicator}>*</Text>
-            </Text>
-            <View style={[styles.picker, errors.make && styles.pickerError]}>
-              <Picker
-                selectedValue={vehicleInfo.make}
-                onValueChange={(value) => {
-                  setVehicleInfo(prev => ({ ...prev, make: value }));
-                  if (errors.make) {
-                    setErrors(prev => ({ ...prev, make: '' }));
-                  }
-                }}
-              >
-                <Picker.Item label="Select vehicle make" value="" />
-                {VEHICLE_MAKES.map((make) => (
-                  <Picker.Item key={make} label={make} value={make} />
-                ))}
-              </Picker>
-            </View>
-            {errors.make && <Text style={styles.errorText}>{errors.make}</Text>}
+            <AnimatedPressable
+              style={[styles.saveButton, { backgroundColor: theme.primary }]}
+              onPress={() => console.log('Save Changes Pressed')}
+            >
+              <ThemedText style={styles.saveButtonText}>Save Changes</ThemedText>
+            </AnimatedPressable>
           </View>
-
-          {/* Vehicle Model */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>
-              Vehicle Model <Text style={styles.requiredIndicator}>*</Text>
-            </Text>
-            <TextInput
-              style={[styles.input, errors.model && styles.inputError]}
-              placeholder={PLACEHOLDERS.VEHICLE_MODEL}
-              value={vehicleInfo.model}
-              onChangeText={(text) => {
-                setVehicleInfo(prev => ({ ...prev, model: text }));
-                if (errors.model) {
-                  setErrors(prev => ({ ...prev, model: '' }));
-                }
-              }}
-              placeholderTextColor={theme.text + '80'}
-            />
-            {errors.model && <Text style={styles.errorText}>{errors.model}</Text>}
-          </View>
-
-          {/* Vehicle Year */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Vehicle Year</Text>
-            <TextInput
-              style={[styles.input, errors.year && styles.inputError]}
-              placeholder={PLACEHOLDERS.VEHICLE_YEAR}
-              value={vehicleInfo.year?.toString() || ''}
-              onChangeText={(text) => {
-                const year = parseVehicleYear(text);
-                setVehicleInfo(prev => ({ ...prev, year }));
-                if (errors.year) {
-                  setErrors(prev => ({ ...prev, year: '' }));
-                }
-              }}
-              keyboardType="numeric"
-              placeholderTextColor={theme.text + '80'}
-            />
-            {errors.year && <Text style={styles.errorText}>{errors.year}</Text>}
-          </View>
-
-          {/* Vehicle Color */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Vehicle Color</Text>
-            <View style={[styles.picker, errors.color && styles.pickerError]}>
-              <Picker
-                selectedValue={vehicleInfo.color}
-                onValueChange={(value) => {
-                  setVehicleInfo(prev => ({ ...prev, color: value }));
-                  if (errors.color) {
-                    setErrors(prev => ({ ...prev, color: '' }));
-                  }
-                }}
-              >
-                <Picker.Item label="Select vehicle color" value="" />
-                {VEHICLE_COLORS.map((color) => (
-                  <Picker.Item key={color} label={color} value={color} />
-                ))}
-              </Picker>
-            </View>
-            {errors.color && <Text style={styles.errorText}>{errors.color}</Text>}
-          </View>
-
-          {/* License Plate */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>License Plate Number</Text>
-            <TextInput
-              style={[styles.input, errors.licensePlate && styles.inputError]}
-              placeholder={PLACEHOLDERS.VEHICLE_PLATE}
-              value={vehicleInfo.licensePlate}
-              onChangeText={(text) => {
-                setVehicleInfo(prev => ({ ...prev, licensePlate: text.toUpperCase() }));
-                if (errors.licensePlate) {
-                  setErrors(prev => ({ ...prev, licensePlate: '' }));
-                }
-              }}
-              autoCapitalize="characters"
-              placeholderTextColor={theme.text + '80'}
-            />
-            {errors.licensePlate && <Text style={styles.errorText}>{errors.licensePlate}</Text>}
-          </View>
-
-          {/* Save Button */}
-          <TouchableOpacity
-            style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
-            onPress={saveVehicleInfo}
-            disabled={isSaving}
-          >
-            {isSaving ? (
-              <ActivityIndicator size="small" color="white" />
-            ) : (
-              <Text style={[styles.saveButtonText, { color: colorScheme === 'dark' ? '#000000' : '#FFFFFF' }]}>Save Vehicle Information</Text>
-            )}
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </ThemedView>
-  </SafeAreaView>
+        </KeyboardAwareScrollView>
+      </ThemedView>
+    </SafeAreaView>
   );
 }
+
+// --- Stylesheet (Revamped) ---
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+  },
+  container: {
+    flex: 1,
+  },
+  headerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SPACING,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+  },
+  backButton: {
+    height: 40,
+    width: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  backButtonText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  headerSpacer: {
+    width: 40, // Same width as back button for centering
+  },
+  scrollContentContainer: {
+    paddingBottom: SPACING * 2,
+  },
+  content: {
+    paddingHorizontal: SPACING,
+    paddingTop: SPACING,
+    gap: SPACING * 1.5, // Use gap for consistent spacing between major sections
+  },
+  currentVehicleContainer: {
+    padding: SPACING,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  currentVehicleTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.light.textSecondary, // Muted title for hierarchy
+    marginBottom: 8,
+  },
+  vehicleDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  vehicleDetailValue: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  vehicleDetailLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: SPACING / 2, // Small top margin to separate from card
+  },
+  formContainer: {
+    gap: SPACING, // Use gap for consistent spacing between form inputs
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '500', // Lighter weight for better hierarchy
+    color: Colors.light.textSecondary,
+    marginBottom: 8,
+    marginLeft: 4,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    paddingHorizontal: SPACING * 0.75,
+    gap: SPACING * 0.75,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: SPACING * 0.9,
+    fontSize: 16,
+  },
+  saveButton: {
+    padding: SPACING,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: SPACING, // Add margin to separate from the form
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+});

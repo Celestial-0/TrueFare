@@ -16,9 +16,9 @@ export interface EnvConfig {
 
 // Default fallback values
 const defaultConfig: EnvConfig = {
-  API_BASE_URL: 'http://localhost:8000/api',
-  SOCKET_URL: 'http://localhost:8000',
-  MAIN_URL: 'localhost',
+  API_BASE_URL: 'http://192.168.137.55:8000/api',
+  SOCKET_URL: 'http://192.168.137.55:8000',
+  MAIN_URL: '192.168.137.55',
   APP_NAME: 'TrueFare',
   APP_VERSION: '1.0.0',
   DEBUG_MODE: true,

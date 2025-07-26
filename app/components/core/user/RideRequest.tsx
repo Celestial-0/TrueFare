@@ -1,446 +1,253 @@
 import React, { useState } from 'react';
 import {
-  Alert,
   StyleSheet,
-  TextInput,
-  TouchableOpacity,
+  ScrollView,
   View,
-  ActivityIndicator,
+  StyleProp,
+  ViewStyle,
+  TextInput,
 } from 'react-native';
-import { ThemedText } from '../../ThemedText';
-import { ThemedView } from '../../ThemedView';
-import { Colors } from '../../../constants/Colors';
-import { useColorScheme } from '../../../hooks/useColorScheme';
-import apiService from '../../../services/apiService';
-import { useApp } from '../../../contexts/AppContext';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { ThemedText } from '@/components/ThemedText';
+import { Colors } from '@/constants/Colors';
+import { useColorScheme } from '@/hooks/useColorScheme';
 
-interface RideRequestData {
-  pickupAddress: string;
-  pickupLatitude: string;
-  pickupLongitude: string;
-  destinationAddress: string;
-  destinationLatitude: string;
-  destinationLongitude: string;
-  estimatedDistance?: string;
-  estimatedDuration?: string;
-}
+// --- Animation & Icon Libraries ---
+import Animated, {
+  FadeInDown,
+  FadeOutUp,
+  LinearTransition,
+  useAnimatedStyle,
+  withSpring,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { MapPin, ArrowRight, Car, Bike, Zap } from 'lucide-react-native';
 
-interface RideRequestErrors {
-  pickupAddress?: string;
-  pickupLatitude?: string;
-  pickupLongitude?: string;
-  destinationAddress?: string;
-  destinationLatitude?: string;
-  destinationLongitude?: string;
-}
+// --- Type Definitions ---
+type VehicleType = {
+  name: 'Sedan' | 'SUV' | 'Bike';
+  icon: React.ElementType;
+  fare: string;
+  eta: string;
+};
 
-interface RideRequestProps {
-  onRequestCreated?: (requestData: any) => void;
-}
+type AnimatedPressableProps = {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  onPress?: () => void;
+};
 
-export default function RideRequest({ onRequestCreated }: RideRequestProps) {
-  const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? 'light'];
-  const { state } = useApp();
+// --- Mock Data ---
+const MOCK_VEHICLES: VehicleType[] = [
+  { name: 'Sedan', icon: Car, fare: '₹350-400', eta: '5-8 min' },
+  { name: 'SUV', icon: Car, fare: '₹450-520', eta: '6-10 min' },
+  { name: 'Bike', icon: Bike, fare: '₹120-150', eta: '3-5 min' },
+];
 
-  const [formData, setFormData] = useState<RideRequestData>({
-    pickupAddress: '',
-    pickupLatitude: '',
-    pickupLongitude: '',
-    destinationAddress: '',
-    destinationLatitude: '',
-    destinationLongitude: '',
-    estimatedDistance: '',
-    estimatedDuration: '',
-  });
-
-  const [errors, setErrors] = useState<RideRequestErrors>({});
-  const [isLoading, setIsLoading] = useState(false);
-
-  const validateForm = (): boolean => {
-    const newErrors: RideRequestErrors = {};
-
-    // Validate pickup location
-    if (!formData.pickupAddress.trim()) {
-      newErrors.pickupAddress = 'Pickup address is required';
-    }
-    if (!formData.pickupLatitude.trim()) {
-      newErrors.pickupLatitude = 'Pickup latitude is required';
-    } else if (isNaN(parseFloat(formData.pickupLatitude))) {
-      newErrors.pickupLatitude = 'Pickup latitude must be a valid number';
-    }
-    if (!formData.pickupLongitude.trim()) {
-      newErrors.pickupLongitude = 'Pickup longitude is required';
-    } else if (isNaN(parseFloat(formData.pickupLongitude))) {
-      newErrors.pickupLongitude = 'Pickup longitude must be a valid number';
-    }
-
-    // Validate destination location
-    if (!formData.destinationAddress.trim()) {
-      newErrors.destinationAddress = 'Destination address is required';
-    }
-    if (!formData.destinationLatitude.trim()) {
-      newErrors.destinationLatitude = 'Destination latitude is required';
-    } else if (isNaN(parseFloat(formData.destinationLatitude))) {
-      newErrors.destinationLatitude = 'Destination latitude must be a valid number';
-    }
-    if (!formData.destinationLongitude.trim()) {
-      newErrors.destinationLongitude = 'Destination longitude is required';
-    } else if (isNaN(parseFloat(formData.destinationLongitude))) {
-      newErrors.destinationLongitude = 'Destination longitude must be a valid number';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async () => {
-    if (!state.currentUser) {
-      Alert.alert('Error', 'Please login first to create a ride request');
-      return;
-    }
-
-    if (!validateForm()) {
-      Alert.alert('Validation Error', 'Please fix the errors in the form');
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const rideRequestData = {
-        userId: state.currentUser.id,
-        pickupLocation: {
-          address: formData.pickupAddress.trim(),
-          coordinates: {
-            latitude: parseFloat(formData.pickupLatitude),
-            longitude: parseFloat(formData.pickupLongitude),
-          },
-        },
-        destination: {
-          address: formData.destinationAddress.trim(),
-          coordinates: {
-            latitude: parseFloat(formData.destinationLatitude),
-            longitude: parseFloat(formData.destinationLongitude),
-          },
-        },
-        ...(formData.estimatedDistance && {
-          estimatedDistance: parseFloat(formData.estimatedDistance),
-        }),
-        ...(formData.estimatedDuration && {
-          estimatedDuration: parseFloat(formData.estimatedDuration),
-        }),
-      };
-
-      const response = await apiService.createRideRequest(rideRequestData);
-
-      if (response.success && response.data) {
-        // Clear form
-        setFormData({
-          pickupAddress: '',
-          pickupLatitude: '',
-          pickupLongitude: '',
-          destinationAddress: '',
-          destinationLatitude: '',
-          destinationLongitude: '',
-          estimatedDistance: '',
-          estimatedDuration: '',
-        });
-
-        onRequestCreated?.(response.data);
-        Alert.alert('Success', 'Ride request created successfully! Drivers will start bidding shortly.');
-      } else {
-        Alert.alert('Error', response.error || 'Failed to create ride request');
+// --- Reusable Animated Components ---
+const AnimatedPressable = ({ children, style, onPress }: AnimatedPressableProps) => (
+  <GestureDetector
+    gesture={Gesture.Tap().onEnd((event, success) => {
+      if (success && onPress) {
+        onPress();
       }
-    } catch (error) {
-      console.error('Error creating ride request:', error);
-      Alert.alert('Error', 'Failed to create ride request. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    })}
+  >
+    <Animated.View style={style}>
+      {children}
+    </Animated.View>
+  </GestureDetector>
+);
 
-  const updateFormData = (field: keyof RideRequestData, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    // Clear error when user starts typing
-    if (errors[field as keyof RideRequestErrors]) {
-      setErrors(prev => ({ ...prev, [field]: undefined }));
-    }
-  };
+const LocationInput = ({
+  label,
+  placeholder,
+  index,
+}: {
+  label: string;
+  placeholder: string;
+  index: number;
+}) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  return (
+    <Animated.View entering={FadeInDown.delay(index * 100).duration(600)}>
+      <ThemedText style={styles.label}>{label}</ThemedText>
+      <View style={[styles.inputContainer, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <MapPin color={theme.primary} size={20} />
+        <TextInput
+          placeholder={placeholder}
+          placeholderTextColor={theme.textSecondary}
+          style={[styles.input, { color: theme.text }]}
+        />
+      </View>
+    </Animated.View>
+  );
+};
 
-  const inputStyle = [
-    styles.input,
-    {
-      backgroundColor: theme.background,
-      borderColor: theme.text + '20',
-      color: theme.text,
-    },
-  ];
-
-  const errorInputStyle = [
-    styles.input,
-    {
-      backgroundColor: theme.background,
-      borderColor: '#ff4444',
-      color: theme.text,
-    },
-  ];
+const VehicleTypeCard = ({
+  vehicle,
+  index,
+  isSelected,
+  onSelect,
+}: {
+  vehicle: VehicleType;
+  index: number;
+  isSelected: boolean;
+  onSelect: () => void;
+}) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  const scale = useAnimatedStyle(() => ({
+    transform: [{ scale: withSpring(isSelected ? 1.05 : 1) }],
+    borderColor: withSpring(isSelected ? theme.primary : theme.border),
+  }));
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedView style={[styles.formContainer, { backgroundColor: theme.background }]}>
-        <ThemedText style={[styles.title, { color: theme.text }]}>
-          Request a Ride
-        </ThemedText>
-        
-        <ThemedText style={[styles.subtitle, { color: theme.text }]}>
-          Enter pickup and destination details
-        </ThemedText>
-
-        {/* Pickup Location Section */}
-        <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>
-          Pickup Location
-        </ThemedText>
-
-        <View style={styles.inputContainer}>
-          <ThemedText style={[styles.label, { color: theme.text }]}>
-            Pickup Address *
-          </ThemedText>
-          <TextInput
-            style={errors.pickupAddress ? errorInputStyle : inputStyle}
-            value={formData.pickupAddress}
-            onChangeText={(value) => updateFormData('pickupAddress', value)}
-            placeholder="Enter pickup address"
-            placeholderTextColor={theme.text + '60'}
-          />
-          {errors.pickupAddress && (
-            <ThemedText style={styles.errorText}>{errors.pickupAddress}</ThemedText>
-          )}
-        </View>
-
-        <View style={styles.row}>
-          <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
-            <ThemedText style={[styles.label, { color: theme.text }]}>
-              Latitude *
-            </ThemedText>
-            <TextInput
-              style={errors.pickupLatitude ? errorInputStyle : inputStyle}
-              value={formData.pickupLatitude}
-              onChangeText={(value) => updateFormData('pickupLatitude', value)}
-              placeholder="e.g., 40.7128"
-              placeholderTextColor={theme.text + '60'}
-              keyboardType="numeric"
-            />
-            {errors.pickupLatitude && (
-              <ThemedText style={styles.errorText}>{errors.pickupLatitude}</ThemedText>
-            )}
-          </View>
-
-          <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
-            <ThemedText style={[styles.label, { color: theme.text }]}>
-              Longitude *
-            </ThemedText>
-            <TextInput
-              style={errors.pickupLongitude ? errorInputStyle : inputStyle}
-              value={formData.pickupLongitude}
-              onChangeText={(value) => updateFormData('pickupLongitude', value)}
-              placeholder="e.g., -74.0060"
-              placeholderTextColor={theme.text + '60'}
-              keyboardType="numeric"
-            />
-            {errors.pickupLongitude && (
-              <ThemedText style={styles.errorText}>{errors.pickupLongitude}</ThemedText>
-            )}
-          </View>
-        </View>
-
-        {/* Destination Section */}
-        <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>
-          Destination
-        </ThemedText>
-
-        <View style={styles.inputContainer}>
-          <ThemedText style={[styles.label, { color: theme.text }]}>
-            Destination Address *
-          </ThemedText>
-          <TextInput
-            style={errors.destinationAddress ? errorInputStyle : inputStyle}
-            value={formData.destinationAddress}
-            onChangeText={(value) => updateFormData('destinationAddress', value)}
-            placeholder="Enter destination address"
-            placeholderTextColor={theme.text + '60'}
-          />
-          {errors.destinationAddress && (
-            <ThemedText style={styles.errorText}>{errors.destinationAddress}</ThemedText>
-          )}
-        </View>
-
-        <View style={styles.row}>
-          <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
-            <ThemedText style={[styles.label, { color: theme.text }]}>
-              Latitude *
-            </ThemedText>
-            <TextInput
-              style={errors.destinationLatitude ? errorInputStyle : inputStyle}
-              value={formData.destinationLatitude}
-              onChangeText={(value) => updateFormData('destinationLatitude', value)}
-              placeholder="e.g., 40.7589"
-              placeholderTextColor={theme.text + '60'}
-              keyboardType="numeric"
-            />
-            {errors.destinationLatitude && (
-              <ThemedText style={styles.errorText}>{errors.destinationLatitude}</ThemedText>
-            )}
-          </View>
-
-          <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
-            <ThemedText style={[styles.label, { color: theme.text }]}>
-              Longitude *
-            </ThemedText>
-            <TextInput
-              style={errors.destinationLongitude ? errorInputStyle : inputStyle}
-              value={formData.destinationLongitude}
-              onChangeText={(value) => updateFormData('destinationLongitude', value)}
-              placeholder="e.g., -73.9851"
-              placeholderTextColor={theme.text + '60'}
-              keyboardType="numeric"
-            />
-            {errors.destinationLongitude && (
-              <ThemedText style={styles.errorText}>{errors.destinationLongitude}</ThemedText>
-            )}
-          </View>
-        </View>
-
-        {/* Optional Fields */}
-        <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>
-          Additional Info (Optional)
-        </ThemedText>
-
-        <View style={styles.row}>
-          <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
-            <ThemedText style={[styles.label, { color: theme.text }]}>
-              Distance (km)
-            </ThemedText>
-            <TextInput
-              style={inputStyle}
-              value={formData.estimatedDistance}
-              onChangeText={(value) => updateFormData('estimatedDistance', value)}
-              placeholder="e.g., 5.2"
-              placeholderTextColor={theme.text + '60'}
-              keyboardType="numeric"
-            />
-          </View>
-
-          <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
-            <ThemedText style={[styles.label, { color: theme.text }]}>
-              Duration (min)
-            </ThemedText>
-            <TextInput
-              style={inputStyle}
-              value={formData.estimatedDuration}
-              onChangeText={(value) => updateFormData('estimatedDuration', value)}
-              placeholder="e.g., 15"
-              placeholderTextColor={theme.text + '60'}
-              keyboardType="numeric"
-            />
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={[styles.submitButton, { backgroundColor: '#007AFF' }]}
-          onPress={handleSubmit}
-          disabled={isLoading}
+    <Animated.View layout={LinearTransition.springify()}>
+      <AnimatedPressable onPress={onSelect}>
+        <Animated.View
+          entering={FadeInDown.delay(index * 100).duration(600)}
+          style={[styles.vehicleCard, { backgroundColor: theme.card }, scale]}
         >
-          {isLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <ThemedText style={styles.submitButtonText}>
-              Create Ride Request
-            </ThemedText>
+          <vehicle.icon color={theme.primary} size={32} />
+          <View style={styles.vehicleDetails}>
+            <ThemedText style={styles.vehicleName}>{vehicle.name}</ThemedText>
+            <ThemedText style={styles.vehicleEta}>{vehicle.eta}</ThemedText>
+          </View>
+          <ThemedText style={styles.vehicleFare}>{vehicle.fare}</ThemedText>
+        </Animated.View>
+      </AnimatedPressable>
+    </Animated.View>
+  );
+};
+
+// --- Main Screen Component ---
+export default function RideRequestScreen() {
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const [step, setStep] = useState(1);
+  const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+        <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+          <Animated.View entering={FadeInDown.duration(400)}>
+            <ThemedText style={styles.headerTitle}>Where to?</ThemedText>
+          </Animated.View>
+
+          {step === 1 && (
+            <Animated.View key="step1" exiting={FadeOutUp.duration(300)}>
+              <LocationInput index={0} label="Pickup Location" placeholder="Your current location" />
+              <LocationInput index={1} label="Destination" placeholder="Search for a destination" />
+              <View>
+                <AnimatedPressable
+                  onPress={() => setStep(2)}
+                  style={[styles.actionButton, { backgroundColor: theme.primary }]}
+                >
+                  <ThemedText style={styles.actionButtonText}>Find Ride</ThemedText>
+                  <ArrowRight color="#fff" size={20} />
+                </AnimatedPressable>
+              </View>
+            </Animated.View>
           )}
-        </TouchableOpacity>
-      </ThemedView>
-    </ThemedView>
+
+          {step === 2 && (
+            <Animated.View key="step2">
+              <ThemedText style={styles.sectionTitle}>Choose a Ride</ThemedText>
+              {MOCK_VEHICLES.map((vehicle, index) => (
+                <VehicleTypeCard
+                  key={vehicle.name}
+                  vehicle={vehicle}
+                  index={index}
+                  isSelected={selectedVehicle === vehicle.name}
+                  onSelect={() => setSelectedVehicle(vehicle.name)}
+                />
+              ))}
+              <View>
+                <AnimatedPressable
+                  onPress={() => {
+                    /* Handle final request */
+                  }}
+                  style={[styles.actionButton, { backgroundColor: '#28a745', marginTop: 24 }]}
+                >
+                  <ThemedText style={styles.actionButtonText}>Confirm Ride</ThemedText>
+                  <Zap color="#fff" size={20} />
+                </AnimatedPressable>
+              </View>
+              <View>
+                <AnimatedPressable
+                  onPress={() => setStep(1)}
+                  style={[styles.backButton, { borderColor: theme.border }]}
+                >
+                  <ThemedText style={[styles.backButtonText, {color: theme.textSecondary}]}>Back</ThemedText>
+                </AnimatedPressable>
+              </View>
+            </Animated.View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
+// --- Stylesheet ---
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-  },
-  formContainer: {
-    borderRadius: 16,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 32,
-    opacity: 0.8,
-    lineHeight: 22,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginTop: 16,
-    marginBottom: 16,
-  },
+  safeArea: { flex: 1 },
+  scrollContainer: { padding: 16, paddingBottom: 40 },
+  headerTitle: { fontSize: 28, fontWeight: 'bold', marginBottom: 24 },
+  label: { fontSize: 14, fontWeight: '600', marginBottom: 8, opacity: 0.8 },
   inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    paddingHorizontal: 12,
     marginBottom: 20,
   },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
-    marginBottom: 8,
-  },
   input: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
     fontSize: 16,
-    minHeight: 48,
   },
-  row: {
+  actionButton: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  errorText: {
-    color: '#ff4444',
-    fontSize: 14,
-    marginTop: 4,
-  },
-  submitButton: {
-    borderRadius: 8,
-    paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 24,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 3,
+    justifyContent: 'center',
+    padding: 18,
+    borderRadius: 16,
+    marginTop: 12,
   },
-  submitButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+  actionButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+    marginRight: 8,
+  },
+  sectionTitle: { fontSize: 20, fontWeight: '700', marginBottom: 16 },
+  vehicleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1.5,
+  },
+  vehicleDetails: { flex: 1, marginLeft: 16 },
+  vehicleName: { fontSize: 16, fontWeight: '600' },
+  vehicleEta: { fontSize: 12, opacity: 0.7, marginTop: 2 },
+  vehicleFare: { fontSize: 16, fontWeight: 'bold' },
+  backButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderRadius: 16,
+    marginTop: 12,
+    borderWidth: 1.5,
+  },
+  backButtonText: {
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 });

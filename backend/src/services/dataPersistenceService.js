@@ -2,10 +2,27 @@ import RideRequest from '../models/rideRequest.model.js';
 import Driver from '../models/driver.model.js';
 import User from '../models/user.model.js';
 import { APP_CONSTANTS } from '../constants.js';
+import logger from '../utils/logger.js';
 
 /**
  * Service for handling data persistence and recovery operations
+ * 
+ * @typedef {{{
+ *   userId: string,
+ *   name: string,
+ *   phone: string,
+ *   rating: number
+ * }}} UserProfile
+ * 
+ * @typedef {{{
+ *   driverId: string,
+ *   name: string,
+ *   phone: string,
+ *   rating: number,
+ *   vehicleInfo: object
+ * }}} DriverProfile
  */
+
 class DataPersistenceService {
     
     /**
@@ -22,12 +39,12 @@ class DataPersistenceService {
                         APP_CONSTANTS.RIDE_STATUS.ACCEPTED
                     ] 
                 }
-            }).sort({ createdAt: -1 });
+            }).sort({ createdAt: -1 }).lean();
 
-            console.log(`Recovered ${activeRequests.length} active ride requests`);
+            logger.info(`Recovered ${activeRequests.length} active ride requests`);
             return activeRequests;
         } catch (error) {
-            console.error('Error recovering active ride requests:', error);
+            logger.error('Error recovering active ride requests:', error);
             throw error;
         }
     }
@@ -41,11 +58,11 @@ class DataPersistenceService {
             const requestsWithBids = await RideRequest.find({
                 status: APP_CONSTANTS.RIDE_STATUS.BIDDING,
                 'bids.0': { $exists: true }
-            }).select('_id userId bids status createdAt');
+            }).select('_id userId bids status createdAt').lean();
 
             return requestsWithBids;
         } catch (error) {
-            console.error('Error getting pending bids:', error);
+            logger.error('Error getting pending bids:', error);
             throw error;
         }
     }
@@ -70,7 +87,7 @@ class DataPersistenceService {
 
             return result;
         } catch (error) {
-            console.error('Error cleaning up old requests:', error);
+            logger.error('Error cleaning up old requests:', error);
             throw error;
         }
     }
@@ -116,7 +133,7 @@ class DataPersistenceService {
                 statusBreakdown: stats
             };
         } catch (error) {
-            console.error('Error getting ride request stats:', error);
+            logger.error('Error getting ride request stats:', error);
             throw error;
         }
     }
@@ -139,16 +156,16 @@ class DataPersistenceService {
             );
 
             if (expiredBiddingRequests.modifiedCount > 0) {
-                console.log(`Cancelled ${expiredBiddingRequests.modifiedCount} expired bidding requests`);
+                logger.info(`Cancelled ${expiredBiddingRequests.modifiedCount} expired bidding requests`);
             }
 
             // Reset driver and user online status
             await Driver.updateMany({}, { isOnline: false });
             await User.updateMany({}, { isOnline: false });
 
-            console.log('Data consistency check completed');
+            logger.info('Data consistency check completed');
         } catch (error) {
-            console.error('Error ensuring data consistency:', error);
+            logger.error('Error ensuring data consistency:', error);
             throw error;
         }
     }
@@ -176,20 +193,51 @@ class DataPersistenceService {
                     bids: 1,
                     acceptedBid: 1
                 }
-            ).sort({ createdAt: -1 });
+            ).sort({ createdAt: -1 }).lean();
 
             // Filter to only include the driver's bids and relevant information
             const filteredHistory = bidHistory.map(request => {
                 const driverBids = request.bids.filter(bid => bid.driverId === driverId);
                 return {
-                    ...request.toObject(),
+                    ...request,
                     driverBids: driverBids
                 };
             });
 
             return filteredHistory;
         } catch (error) {
-            console.error('Error getting driver bid history:', error);
+            logger.error('Error getting driver bid history:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get driver ride history with pagination
+     * @param {string} driverId - Driver ID
+     * @param {number} page - Page number (default: 1)
+     * @param {number} limit - Items per page (default: 10)
+     * @returns {Promise<Array>} Array of ride history where driver was accepted
+     */
+    static async getDriverRideHistory(driverId, page = 1, limit = 10) {
+        try {
+            if (!driverId) {
+                throw new Error('Driver ID is required');
+            }
+            
+            const skip = (page - 1) * limit;
+            
+            const rideHistory = await RideRequest.find({
+                'acceptedBid.driverId': driverId
+            })
+            .populate('userId', 'userId name phone rating')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean();
+
+            return rideHistory;
+        } catch (error) {
+            logger.error('Error getting driver ride history:', error);
             throw error;
         }
     }
@@ -207,11 +255,12 @@ class DataPersistenceService {
 
             const rideHistory = await RideRequest.find({ userId })
                 .sort({ createdAt: -1 })
-                .select('_id pickupLocation destination status bids acceptedBid createdAt updatedAt');
+                .select('_id pickupLocation destination status bids acceptedBid createdAt updatedAt')
+                .lean();
 
             return rideHistory;
         } catch (error) {
-            console.error('Error getting user ride history:', error);
+            logger.error('Error getting user ride history:', error);
             throw error;
         }
     }
@@ -241,7 +290,7 @@ class DataPersistenceService {
 
             return backupData;
         } catch (error) {
-            console.error('Error backing up ride request data:', error);
+            logger.error('Error backing up ride request data:', error);
             throw error;
         }
     }

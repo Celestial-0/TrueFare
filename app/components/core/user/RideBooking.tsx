@@ -1,735 +1,428 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
-  Alert,
-  ScrollView,
   ActivityIndicator,
+  ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
+  Alert,
 } from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  withRepeat,
+  Easing,
+  SlideInDown,
+} from 'react-native-reanimated';
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
 import { Colors } from '@/constants/Colors';
-import {
-  API_BASE_URL,
-  API_ENDPOINTS,
-  DEFAULT_COORDINATES,
-  PLACEHOLDERS,
-  ERROR_MESSAGES,
-  UserData,
-} from '@/utils/userConstants';
-import { Socket } from 'socket.io-client';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useApp } from '@/contexts/AppContext';
-import type { RideRequest as AppRideRequest } from '@/contexts/AppContext';
-import socketService from '@/services/socketService';
+import { Bid, RideStatus, BidStatus } from '@/types/types';
+import { VehicleType } from '@/types/vehicle.types';
+import VehicleSelector from './VehicleSelector';
 
+// --- PROPS INTERFACE ---
 interface RideBookingProps {
-  currentUser: UserData | null;
-  onRideRequestCreated?: (request: AppRideRequest) => void;
-  onSocketConnected?: (socket: Socket) => void;
+  onRideRequestCreated?: (requestId: string) => void;
 }
 
-export default function RideBooking({ 
-  currentUser, 
-  onRideRequestCreated,
-  onSocketConnected 
-}: RideBookingProps) {
-  const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? 'light'];
-  const { state, dispatch, addNotification } = useApp();
-  const listenersSetupRef = useRef<string | null>(null);
-  
-  const [pickupLocation, setPickupLocation] = useState('');
-  const [destination, setDestination] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  
-  // Use app context state instead of local state
-  const currentRequest = state.rideRequests.find(req => req.status === 'bidding') || null;
-  const bids = state.currentBids;
-  const [selectedBid, setSelectedBid] = useState<any | null>(null);
-  const [biddingStatus, setBiddingStatus] = useState<'waiting' | 'receiving' | 'closed'>('waiting');
 
-  
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContainer: {
-    flexGrow: 1,
-    padding: 20,
-  },
-  formContainer: {
-    borderRadius: 16,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  statusIndicator: {
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 20,
-    alignItems: 'center',
-  },
-  statusText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  currentRequestContainer: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  requestInfo: {
-    fontSize: 14,
-    marginBottom: 4,
-    opacity: 0.8,
-  },
-  userInfoContainer: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 20,
-  },
-  userInfo: {
-    fontSize: 14,
-    marginBottom: 4,
-    opacity: 0.8,
-  },
-  instructionsText: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 20,
-    padding: 12,
-    backgroundColor: 'rgba(0, 123, 255, 0.1)',
-    borderRadius: 8,
-    lineHeight: 20,
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    minHeight: 48,
-  },
-  submitButton: {
-    borderRadius: 8,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 16,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  cancelButton: {
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  buttonText: {
-    color: colorScheme === "dark" ? "#000000" : "#FFFFFF",
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  errorText: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 50,
-    opacity: 0.7,
-  },
-  biddingContainer: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 20,
-  },
-  biddingHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  refreshButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  refreshButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  waitingText: {
-    textAlign: 'center',
-    fontSize: 14,
-    opacity: 0.7,
-    marginVertical: 10,
-  },
-  bidsContainer: {
-    marginTop: 10,
-  },
-  bidsHeader: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 10,
-  },
-  bidItem: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-  },
-  bidHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  bidAmount: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#28a745',
-  },
-  bidDriver: {
-    fontSize: 14,
-    opacity: 0.8,
-  },
-  bidEta: {
-    fontSize: 12,
-    opacity: 0.7,
-    marginBottom: 2,
-  },
-  bidMessage: {
-    fontSize: 12,
-    opacity: 0.7,
-    fontStyle: 'italic',
-    marginBottom: 8,
-  },
-  acceptBidButton: {
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  moreBidsText: {
-    textAlign: 'center',
-    fontSize: 12,
-    opacity: 0.6,
-    marginTop: 8,
-  },
-  selectedBidContainer: {
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 10,
-    alignItems: 'center',
-  },
-  selectedBidTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  selectedBidAmount: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#28a745',
-    marginBottom: 2,
-  },
-  selectedBidDriver: {
-    fontSize: 14,
-    opacity: 0.8,
-  },
-});
-  // Socket event handlers using the socketService
-  useEffect(() => {
-    if (!state.isConnected) return;
+// --- ENHANCED & NEW ANIMATED HELPER COMPONENTS ---
 
-    const userId = currentUser?.userId;
-    
-    if (!userId) return;
+/**
+ * AnimatedPressable Component
+ * ENHANCEMENT: Now handles a `disabled` state by reducing opacity,
+ * providing clear visual feedback for non-interactive elements.
+ */
+const AnimatedPressable = ({ children, style, onPress, disabled, ...props }: any) => {
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: withTiming(disabled ? 0.6 : 1, { duration: 200 }),
+  }));
 
-    // Prevent duplicate listener setup for the same user
-    if (listenersSetupRef.current === userId) {
-      return;
-    }
-
-    console.log('RideBooking: Setting up socket listeners for user:', userId);
-    listenersSetupRef.current = userId;
-
-    // The app context already handles these events globally, so we don't need to duplicate them here
-    
-    // Cleanup listeners on unmount
-    return () => {
-      console.log('RideBooking: Cleaning up socket listeners');
-      listenersSetupRef.current = null;
-    };
-  }, [state.isConnected, currentUser?.userId]);
-
-  const validateInputs = (): boolean => {
-    if (!pickupLocation.trim()) {
-      Alert.alert('Validation Error', 'Please enter pickup location');
-      return false;
-    }
-    
-    if (!destination.trim()) {
-      Alert.alert('Validation Error', 'Please enter destination');
-      return false;
-    }
-    
-    if (pickupLocation.trim() === destination.trim()) {
-      Alert.alert('Validation Error', 'Pickup and destination cannot be the same');
-      return false;
-    }
-    
-    return true;
+  const handlePressIn = () => {
+    if (disabled) return;
+    scale.value = withTiming(0.97, { duration: 100, easing: Easing.out(Easing.ease) });
   };
-
-  const createRideRequest = async () => {
-    if (!currentUser) {
-      Alert.alert('Error', ERROR_MESSAGES.NO_USER_LOGGED_IN);
-      return;
-    }
-
-    if (!validateInputs()) {
-      return;
-    }
-
-    setIsLoading(true);
-    
-    try {
-      const requestData = {
-        userId: currentUser.userId,
-        pickupLocation: {
-          address: pickupLocation.trim(),
-          coordinates: {
-            latitude: DEFAULT_COORDINATES.latitude,
-            longitude: DEFAULT_COORDINATES.longitude,
-          },
-        },
-        destination: {
-          address: destination.trim(),
-          coordinates: {
-            latitude: DEFAULT_COORDINATES.latitude + 0.01, // Slight offset for demo
-            longitude: DEFAULT_COORDINATES.longitude + 0.01,
-          },
-        },
-        estimatedDistance: 5.2, // Demo value
-        estimatedDuration: 15, // Demo value in minutes
-      };
-
-      const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.RIDE_REQUESTS}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestData),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        const newRequest: AppRideRequest = {
-          _id: data.data.requestId || data.data.id || data.data._id,
-          userId: currentUser.userId!,
-          pickupLocation: {
-            address: requestData.pickupLocation.address,
-            coordinates: {
-              latitude: requestData.pickupLocation.coordinates.latitude,
-              longitude: requestData.pickupLocation.coordinates.longitude
-            }
-          },
-          destination: {
-            address: requestData.destination.address,
-            coordinates: {
-              latitude: requestData.destination.coordinates.latitude,
-              longitude: requestData.destination.coordinates.longitude
-            }
-          },
-          status: 'bidding',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          bids: []
-        };
-        
-        // Add to app context
-        dispatch({ type: 'ADD_RIDE_REQUEST', payload: newRequest });
-        setBiddingStatus('waiting');
-        onRideRequestCreated?.(newRequest);
-        
-        addNotification('Ride request created successfully!');
-        
-        // Clear form immediately after successful submission
-        setPickupLocation('');
-        setDestination('');
-        
-        // Request bid updates with a small delay to ensure backend processing is complete
-        setTimeout(() => {
-          const requestBidUpdates = (retryCount: number = 0) => {
-            if (socketService.socket && socketService.socket.connected && state.isSocketRegistered) {
-              console.log('🔄 Requesting bid updates for request:', newRequest._id);
-              socketService.socket.emit('user:requestBidUpdate', { requestId: newRequest._id });
-            } else if (retryCount < 5) {
-              console.warn(`⚠️ Cannot request bid updates (attempt ${retryCount + 1}/5):`, {
-                socketConnected: socketService.socket?.connected,
-                isSocketRegistered: state.isSocketRegistered
-              });
-              
-              // Retry after 2 seconds, up to 5 times (total 10 seconds)
-              setTimeout(() => requestBidUpdates(retryCount + 1), 2000);
-            } else {
-              console.error('❌ Failed to request bid updates after 5 attempts');
-              addNotification('Unable to connect for bid updates. Try refreshing the bid display.');
-            }
-          };
-          
-          requestBidUpdates();
-        }, 1000);
-        
-      } else {
-        Alert.alert('Error', data.message || ERROR_MESSAGES.GENERAL_ERROR);
-      }
-    } catch (error) {
-      console.error('Error creating ride request:', error);
-      Alert.alert('Error', ERROR_MESSAGES.NETWORK_ERROR);
-    } finally {
-      setIsLoading(false);
-    }
+  const handlePressOut = () => {
+    if (disabled) return;
+    scale.value = withSpring(1, { damping: 15, stiffness: 300 });
   };
-
-  const cancelRideRequest = () => {
-    Alert.alert(
-      'Cancel Ride Request',
-      'Are you sure you want to cancel this ride request?',
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes',
-          style: 'destructive',
-          onPress: () => {
-            if (currentRequest) {
-              dispatch({ 
-                type: 'UPDATE_RIDE_REQUEST', 
-                payload: { 
-                  _id: currentRequest._id, 
-                  updates: { status: 'cancelled' } 
-                } 
-              });
-              dispatch({ type: 'SET_CURRENT_BIDS', payload: [] });
-            }
-            setBiddingStatus('waiting');
-            addNotification('Ride request has been cancelled');
-          },
-        },
-      ]
-    );
-  };
-
-  const acceptBid = async (bid: any) => {
-    if (!currentRequest) return;
-    
-    Alert.alert(
-      'Accept Bid',
-      `Accept bid of ₹${bid.fareAmount} from driver ${bid.driverId}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Accept',
-          style: 'default',
-          onPress: async () => {
-            try {
-              setIsLoading(true);
-              
-              const response = await fetch(
-                `${API_BASE_URL}/ride-requests/${currentRequest._id}/bids/${bid._id}/accept`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                }
-              );
-              
-              const data = await response.json();
-              
-              if (data.success) {
-                setSelectedBid(bid);
-                setBiddingStatus('closed');
-                Alert.alert('Success', 'Bid accepted! Driver has been notified.');
-              } else {
-                Alert.alert('Error', data.message || 'Failed to accept bid');
-              }
-            } catch (error) {
-              console.error('Error accepting bid:', error);
-              Alert.alert('Error', 'Failed to accept bid');
-            } finally {
-              setIsLoading(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const refreshBids = async () => {
-    if (!currentRequest) return;
-    
-    try {
-      // Request bid updates via socket
-      if (socketService.socket) {
-        socketService.socket.emit('user:requestBidUpdate', { requestId: currentRequest._id });
-      }
-    } catch (error) {
-      console.error('Error refreshing bids:', error);
-    }
-  };
-
-  if (!currentUser) {
-    return (
-      <ThemedView style={styles.container}>
-        <ThemedText style={styles.errorText}>
-          Please login to book a ride
-        </ThemedText>
-      </ThemedView>
-    );
-  }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+    <Pressable
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      onPress={onPress}
+      disabled={disabled}
+      {...props}
     >
-      <ScrollView 
-        contentContainerStyle={styles.scrollContainer}
-        showsVerticalScrollIndicator={false}
-      >
-        <ThemedView style={styles.formContainer}>
-          {/* Header */}
-          <ThemedText style={styles.title}>Book a Ride</ThemedText>
-          
-          {/* Connection Status */}
-          <View style={[
-            styles.statusIndicator,
-            { backgroundColor: socketService.isConnected() ? '#d4edda' : '#f8d7da' }
-          ]}>
-            <ThemedText style={[
-              styles.statusText,
-              { color: socketService.isConnected() ? '#155724' : '#721c24' }
-            ]}>
-              {socketService.isConnected() ? 'Connected' : 'Disconnected'}
-            </ThemedText>
-          </View>
+      <Animated.View style={[style, animatedStyle]}>
+        {children}
+      </Animated.View>
+    </Pressable>
+  );
+};
 
-          {/* Current Request Display */}
-          {currentRequest && (
-            <ThemedView style={[styles.currentRequestContainer, { borderColor: theme.text }]}>
-              <ThemedText style={styles.sectionTitle}>Current Request</ThemedText>
-              <ThemedText style={styles.requestInfo}>
-                Request ID: {currentRequest._id}
-              </ThemedText>
-              <ThemedText style={styles.requestInfo}>
-                Status: {currentRequest.status}
-              </ThemedText>
-              <ThemedText style={styles.requestInfo}>
-                From: {currentRequest.pickupLocation.address}
-              </ThemedText>
-              <ThemedText style={styles.requestInfo}>
-                To: {currentRequest.destination.address}
-              </ThemedText>
-              <TouchableOpacity
-                style={[styles.cancelButton, { backgroundColor: '#dc3545' }]}
-                onPress={cancelRideRequest}
-              >
-                <ThemedText style={styles.buttonText}>Cancel Request</ThemedText>
-              </TouchableOpacity>
-            </ThemedView>
-          )}
+/**
+ * PulsingView Component
+ * A view that applies a subtle, continuous pulsing opacity animation.
+ * No changes needed, it's already a great micro-animation.
+ */
+const PulsingView = ({ children, style }: { children: React.ReactNode, style?: any }) => {
+  const opacity = useSharedValue(1);
+  React.useEffect(() => {
+    opacity.value = withRepeat(
+      withTiming(0.6, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
+      -1, true
+    );
+  }, [opacity]);
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Animated.View style={[style, animatedStyle]}>{children}</Animated.View>;
+};
 
-          {/* Bidding Section */}
-          {currentRequest && biddingStatus !== 'waiting' && (
-            <ThemedView style={[styles.biddingContainer, { borderColor: theme.text }]}>
-              <View style={styles.biddingHeader}>
-                <ThemedText style={styles.sectionTitle}>
-                  {biddingStatus === 'receiving' ? 'Incoming Bids' : 'Bidding Closed'}
-                </ThemedText>
-                {biddingStatus === 'receiving' && (
-                  <TouchableOpacity
-                    style={[styles.refreshButton, { backgroundColor: theme.tint }]}
-                    onPress={refreshBids}
-                  >
-                    <ThemedText style={[styles.refreshButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>
-                      ↻
-                    </ThemedText>
-                  </TouchableOpacity>
-                )}
+/**
+ * NEW: AnimatedTextInput Component
+ * A modern input with a floating label and an animated border
+ * that responds to focus state, providing a clean micro-interaction.
+ */
+const AnimatedTextInput = ({ label, value, theme, ...props }: any) => {
+    const [isFocused, setIsFocused] = useState(false);
+    const labelPosition = useSharedValue(value ? 1 : 0);
+
+    const handleFocus = () => setIsFocused(true);
+    const handleBlur = () => setIsFocused(false);
+
+    useEffect(() => {
+        labelPosition.value = withTiming(isFocused || value ? 1 : 0, { duration: 200 });
+    }, [isFocused, value, labelPosition]);
+
+    const animatedLabelStyle = useAnimatedStyle(() => {
+        return {
+            top: labelPosition.value === 1 ? -10 : 16,
+            fontSize: labelPosition.value === 1 ? 12 : 16,
+            backgroundColor: theme.background,
+            paddingHorizontal: 4,
+            color: isFocused ? theme.tint : theme.textSecondary,
+        };
+    });
+
+    const styles = getStyles(theme, useColorScheme() ?? 'light');
+
+    return (
+        <View style={styles.inputContainer}>
+            <Animated.Text style={[styles.animatedLabel, animatedLabelStyle]}>
+                {label}
+            </Animated.Text>
+            <TextInput
+                style={[styles.input, { borderColor: isFocused ? theme.tint : theme.border }]}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                value={value}
+                {...props}
+            />
+        </View>
+    );
+};
+
+
+/**
+ * BidItem Component
+ * Uses a staggered SlideInDown animation for a dynamic entrance.
+ * The layout animation ensures smooth re-ordering or removal.
+ */
+const BidItem = React.memo<{
+  bid: Bid;
+  onAccept: (bid: Bid) => void;
+  styles: any;
+  index: number
+}>(({ bid, onAccept, styles, index }) => (
+  <Animated.View
+    entering={SlideInDown.duration(300).delay(index * 100).springify().damping(15)}
+    layout={LinearTransition.springify()}
+    style={styles.bidItem}
+  >
+    <View style={styles.bidHeader}>
+      <View>
+        <ThemedText style={styles.bidDriverName}>{bid.driverName} (⭐ {bid.driverRating})</ThemedText>
+      </View>
+      <ThemedText style={styles.bidAmount}>₹{bid.amount}</ThemedText>
+    </View>
+    <AnimatedPressable onPress={() => onAccept(bid)}>
+      <View style={[styles.button, styles.acceptBidButton]}>
+        <ThemedText style={styles.buttonText}>Accept Bid</ThemedText>
+      </View>
+    </AnimatedPressable>
+  </Animated.View>
+));
+BidItem.displayName = 'BidItem';
+
+
+// --- MAIN COMPONENT ---
+export const RideBooking = ({ onRideRequestCreated }: RideBookingProps) => {
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const styles = getStyles(theme, colorScheme ?? 'light');
+
+  const {
+    loading, socketConnected, currentUser, rideRequests,
+    createRideRequest, acceptBid, cancelRide, addNotification
+  } = useApp();
+
+  const [pickupLocation, setPickupLocation] = useState('');
+  const [destination, setDestination] = useState('');
+  const [selectedVehicleType, setSelectedVehicleType] = useState<VehicleType>(VehicleType.TAXI);
+
+  const activeRideRequest = useMemo(() => {
+    const userId = (currentUser as any)?.userId || currentUser?._id;
+    const activeRequests = rideRequests.filter(req =>
+      req.userId === userId && ['pending', 'bidding', 'accepted'].includes(req.status)
+    );
+    if (activeRequests.length > 0) {
+      return activeRequests.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
+    }
+    return null;
+  }, [rideRequests, currentUser]);
+
+  const bids = activeRideRequest?.bids || [];
+  const selectedBid = useMemo(() => bids.find(bid => bid.status === BidStatus.ACCEPTED), [bids]);
+
+  const handleCreateRequest = useCallback(() => {
+    if (activeRideRequest) {
+      addNotification({ type: 'error', message: 'You already have an active ride request.', createdAt: new Date() });
+      return;
+    }
+    if (!pickupLocation.trim() || !destination.trim()) {
+      addNotification({ type: 'error', message: 'Please enter both pickup and destination.', createdAt: new Date() });
+      return;
+    }
+    const requestData = {
+      rideType: selectedVehicleType,
+      pickupLocation: { address: pickupLocation, coordinates: { latitude: 0, longitude: 0 } },
+      destination: { address: destination, coordinates: { latitude: 0, longitude: 0 } },
+    };
+    createRideRequest(requestData);
+  }, [pickupLocation, destination, selectedVehicleType, createRideRequest, activeRideRequest, addNotification]);
+
+  const handleAcceptBid = useCallback((bid: Bid) => {
+    if (activeRideRequest) acceptBid(activeRideRequest.requestId, bid._id);
+  }, [activeRideRequest, acceptBid]);
+
+  const handleCancelRequest = useCallback(() => {
+    Alert.alert('Cancel Ride', 'Are you sure you want to cancel this request?', [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes, Cancel', style: 'destructive', onPress: () => {
+        if (activeRideRequest) cancelRide(activeRideRequest.requestId, 'User cancelled');
+      }},
+    ]);
+  }, [activeRideRequest, cancelRide]);
+
+  useEffect(() => {
+    if (activeRideRequest && onRideRequestCreated) {
+      onRideRequestCreated(activeRideRequest.requestId);
+    }
+  }, [activeRideRequest, onRideRequestCreated]);
+
+  const renderContent = () => {
+    // STATE 3: Ride Accepted
+    if (selectedBid) {
+      return (
+        <Animated.View key="confirmation" entering={FadeIn.duration(400).springify()} style={styles.selectedBidContainer}>
+          <ThemedText style={styles.selectedBidTitle}>✓ Driver on the way!</ThemedText>
+          <ThemedText style={styles.selectedBidAmount}>₹{selectedBid.amount}</ThemedText>
+          <ThemedText style={styles.selectedBidDriver}>Driver: {selectedBid.driverName}</ThemedText>
+        </Animated.View>
+      );
+    }
+
+    // STATE 2: Bidding Active
+    if (activeRideRequest) {
+      return (
+        <Animated.View key="bidding" entering={FadeIn.duration(500)}>
+          <ThemedView style={styles.card}>
+            <ThemedText style={styles.sectionTitle}>Searching for Drivers</ThemedText>
+            <ThemedText style={styles.infoText}>From: {activeRideRequest.pickupLocation.address}</ThemedText>
+            <ThemedText style={styles.infoText}>To: {activeRideRequest.destination.address}</ThemedText>
+            <AnimatedPressable onPress={handleCancelRequest}>
+              <View style={[styles.button, styles.cancelButton]}>
+                <ThemedText style={styles.cancelButtonText}>Cancel Request</ThemedText>
               </View>
-              
-              {biddingStatus === 'receiving' && bids.length === 0 && (
-                <ThemedText style={styles.waitingText}>
-                  Waiting for drivers to place bids...
-                </ThemedText>
-              )}
-              
-              {bids.length > 0 && (
-                <View style={styles.bidsContainer}>
-                  <ThemedText style={styles.bidsHeader}>
-                    Total Bids: {bids.length}
-                  </ThemedText>
-                  
-                  {bids.slice(0, 5).map((bid, index) => (
-                    <View key={bid._id || index} style={[styles.bidItem, { borderColor: theme.text + '30' }]}>
-                      <View style={styles.bidHeader}>
-                        <ThemedText style={styles.bidAmount}>₹{bid.fareAmount}</ThemedText>
-                        <ThemedText style={styles.bidDriver}>Driver: {bid.driverId}</ThemedText>
-                      </View>
-                      
-                      {biddingStatus === 'receiving' && !selectedBid && (
-                        <TouchableOpacity
-                          style={[styles.acceptBidButton, { backgroundColor: theme.tint }]}
-                          onPress={() => acceptBid(bid)}
-                          disabled={isLoading}
-                        >
-                          <ThemedText style={[styles.buttonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>
-                            Accept Bid
-                          </ThemedText>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  ))}
-                  
-                  {bids.length > 5 && (
-                    <ThemedText style={styles.moreBidsText}>
-                      ... and {bids.length - 5} more bids
-                    </ThemedText>
-                  )}
-                </View>
-              )}
-              
-              {selectedBid && (
-                <View style={[styles.selectedBidContainer, { backgroundColor: theme.tint + '20' }]}>
-                  <ThemedText style={styles.selectedBidTitle}>✓ Accepted Bid</ThemedText>
-                  <ThemedText style={styles.selectedBidAmount}>₹{selectedBid.fareAmount}</ThemedText>
-                  <ThemedText style={styles.selectedBidDriver}>Driver: {selectedBid.driverId}</ThemedText>
-                </View>
-              )}
-            </ThemedView>
-          )}
-
-          {/* Booking Form */}
-          {!currentRequest && (
-            <>
-              <ThemedText style={styles.instructionsText}>
-                📍 Enter your pickup and destination locations to request a ride. 
-                Drivers will bid on your request in real-time!
-              </ThemedText>
-              
-              <View style={styles.inputContainer}>
-                <ThemedText style={styles.label}>Pickup Location</ThemedText>
-                <TextInput
-                  style={[
-                    styles.input,
-                    { 
-                      borderColor: theme.text,
-                      backgroundColor: theme.background,
-                      color: theme.text,
-                    }
-                  ]}
-                  placeholder={PLACEHOLDERS.PICKUP_LOCATION}
-                  placeholderTextColor={theme.text + '80'}
-                  value={pickupLocation}
-                  onChangeText={setPickupLocation}
-                  editable={!isLoading}
-                />
-              </View>
-
-              <View style={styles.inputContainer}>
-                <ThemedText style={styles.label}>Destination</ThemedText>
-                <TextInput
-                  style={[
-                    styles.input,
-                    { 
-                      borderColor: theme.text,
-                      backgroundColor: theme.background,
-                      color: theme.text,
-                    }
-                  ]}
-                  placeholder={PLACEHOLDERS.DESTINATION}
-                  placeholderTextColor={theme.text + '80'}
-                  value={destination}
-                  onChangeText={setDestination}
-                  editable={!isLoading}
-                />
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.submitButton,
-                  { 
-                    backgroundColor: theme.tint,
-                    opacity: isLoading ? 0.7 : 1,
-                  }
-                ]}
-                onPress={createRideRequest}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <ThemedText style={styles.buttonText}>Create Ride Request</ThemedText>
-                )}
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* User Info */}
-          <ThemedView style={[styles.userInfoContainer, { borderColor: theme.text }]}>
-            <ThemedText style={styles.sectionTitle}>User Information</ThemedText>
-            <ThemedText style={styles.userInfo}>Name: {currentUser.name}</ThemedText>
-            <ThemedText style={styles.userInfo}>Phone: {currentUser.phone}</ThemedText>
-            {currentUser.email && (
-              <ThemedText style={styles.userInfo}>Email: {currentUser.email}</ThemedText>
-            )}
-            {currentUser.userId && (
-              <ThemedText style={styles.userInfo}>User ID: {currentUser.userId}</ThemedText>
-            )}
+            </AnimatedPressable>
           </ThemedView>
+
+          <View style={styles.biddingContainer}>
+            <ThemedText style={styles.sectionTitle}>Incoming Bids</ThemedText>
+            {bids.length > 0 ? (
+              bids.map((bid, index) => <BidItem key={bid._id} bid={bid} onAccept={handleAcceptBid} styles={styles} index={index} />)
+            ) : (
+              <PulsingView>
+                <ThemedText style={styles.waitingText}>Waiting for bids...</ThemedText>
+              </PulsingView>
+            )}
+          </View>
+        </Animated.View>
+      );
+    }
+
+    // STATE 1: Create Ride Form
+    return (
+      <Animated.View key="form" entering={FadeIn.duration(500)} exiting={FadeOut.duration(300)}>
+        <ThemedText style={styles.instructionsText}>
+          Enter your locations to find a ride. Drivers will bid in real-time.
+        </ThemedText>
+        <VehicleSelector
+            selectedVehicleType={selectedVehicleType}
+            onVehicleTypeChange={(v: string) => setSelectedVehicleType(v as VehicleType)}
+        />
+        <AnimatedTextInput
+            label="Pickup Location"
+            
+            placeholderTextColor={theme.textSecondary + '80'}
+            value={pickupLocation}
+            onChangeText={setPickupLocation}
+            editable={!loading}
+            theme={theme}
+        />
+        <AnimatedTextInput
+            label="Destination"
+            
+            placeholderTextColor={theme.textSecondary + '80'}
+            value={destination}
+            onChangeText={setDestination}
+            editable={!loading}
+            theme={theme}
+        />
+        <AnimatedPressable onPress={handleCreateRequest} disabled={loading || !pickupLocation || !destination}>
+          <View style={[styles.button, styles.submitButton]}>
+            {loading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <ThemedText style={styles.buttonText}>Request Ride</ThemedText>
+            )}
+          </View>
+        </AnimatedPressable>
+      </Animated.View>
+    );
+  };
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoidingView}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+        <ThemedView style={styles.mainContent}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <ThemedText style={styles.title}>Book a Ride</ThemedText>
+            <View style={[styles.statusDot, socketConnected ? styles.statusDotConnected : styles.statusDotDisconnected]} />
+          </View>
+          <Animated.View layout={LinearTransition.springify().duration(400)}>
+            {renderContent()}
+          </Animated.View>
         </ThemedView>
       </ScrollView>
     </KeyboardAvoidingView>
   );
-}
+};
+
+
+// --- STYLESHEET (ENHANCED FOR MINIMALISM & CLARITY) ---
+const getStyles = (theme: any, colorScheme: 'light' | 'dark') => StyleSheet.create({
+  keyboardAvoidingView: { flex: 1 },
+  container: { flex: 1, backgroundColor: theme.background },
+  scrollContainer: { flexGrow: 1, justifyContent: 'center' },
+  mainContent: { padding: 20, flex: 1 },
+  title: { fontSize: 28, fontWeight: 'bold', color: theme.text, marginBottom: 24, textAlign: 'center' },
+  sectionTitle: { fontSize: 20, fontWeight: '600', color: theme.text, marginBottom: 16 },
+  infoText: { fontSize: 15, color: theme.textSecondary, lineHeight: 22, marginBottom: 4 },
+  instructionsText: { fontSize: 15, color: theme.textSecondary, textAlign: 'center', justifyContent: 'space-evenly', margin: 2, paddingHorizontal: 50, paddingBottom: 12 },
+  waitingText: { textAlign: 'center', color: theme.textSecondary, fontStyle: 'italic', marginVertical: 32, fontSize: 15 },
+  buttonText: { fontSize: 16, fontWeight: 'bold', color: '#FFFFFF' },
+  
+  // Card style with subtle shadow for light mode, border for dark
+  card: {
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+    borderWidth: colorScheme === 'dark' ? 1 : 0,
+    borderColor: theme.border,
+    ...Platform.select({
+        ios: {
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: colorScheme === 'light' ? 0.05 : 0,
+            shadowRadius: 12,
+        },
+        android: {
+            elevation: colorScheme === 'light' ? 3 : 0,
+        },
+    }),
+  },
+  
+  biddingContainer: { marginTop: 8 },
+  
+  // New AnimatedTextInput styles
+  inputContainer: { marginBottom: 16, position: 'relative' },
+  input: {
+    color: theme.text,
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    backgroundColor: 'transparent',
+  },
+  animatedLabel: {
+    position: 'absolute',
+    left: 12,
+    zIndex: 1,
+  },
+  
+  // Button styles
+  button: { paddingVertical: 18, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  submitButton: { backgroundColor: theme.tint },
+  cancelButton: { backgroundColor: 'transparent', marginTop: 12 },
+  cancelButtonText: { color: theme.danger, fontWeight: '600', fontSize: 15 },
+  acceptBidButton: { backgroundColor: theme.success, paddingVertical: 12, marginTop: 8 },
+
+  // Connection Status Dot
+  statusDot: { width: 9, height: 9, borderRadius: 5, marginBottom: 20 },
+  statusDotConnected: { backgroundColor: theme.success },
+  statusDotDisconnected: { backgroundColor: theme.danger },
+
+  // Bid Item Styles
+  bidItem: {
+    backgroundColor: theme.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  bidHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  bidAmount: { fontSize: 20, fontWeight: '700', color: theme.tint },
+  bidDriverName: { fontSize: 16, fontWeight: 'bold', color: theme.text },
+  
+  // Selected Bid Confirmation Styles
+  selectedBidContainer: {
+    backgroundColor: theme.success + '1A', // 10% opacity
+    borderColor: theme.success,
+    borderWidth: 1.5,
+    padding: 24,
+    borderRadius: 16,
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  selectedBidTitle: { fontSize: 18, fontWeight: '600', color: theme.success, marginBottom: 12 },
+  selectedBidAmount: { fontSize: 28, fontWeight: 'bold', color: theme.success, marginBottom: 8 },
+  selectedBidDriver: { fontSize: 16, color: theme.text, opacity: 0.9 },
+});
