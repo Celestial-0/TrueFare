@@ -13,12 +13,18 @@ The TrueFare backend uses a hybrid architecture to handle both HTTP API requests
 ```
 backend/
   src/
-    models/          # Mongoose models (e.g., User, RideRequest, Bid)
-    routes/          # Express routes (HTTP API endpoints)
-    services/        # Business logic services
-    utils/           # Utility functions and classes
-    index.js         # Main entry point (sets up Express and WebSocket server)
-    socket.js        # WebSocket server setup and event binding
+    config/          # Configuration files (e.g., environment variables)
+    constants.js     # Shared constant values
+    controllers/     # Request handlers for HTTP and WebSocket events
+    db/              # Database connection and setup
+    middleware/      # Express middleware (e.g., authentication, error handling)
+    models/          # Mongoose data models
+    routes/          # Express route definitions
+    services/        # Core business logic
+    utils/           # Reusable utility functions
+    validations/     # Zod validation schemas
+    app.js           # Express application setup
+    index.js         # Main server entry point
 ```
 
 ## Detailed Component Breakdown
@@ -41,141 +47,96 @@ const rideRequestSchema = new mongoose.Schema({
 });
 ```
 
-### Services
-Services contain the core business logic and are located in `src/services/`. They are used by both HTTP controllers and WebSocket event handlers.
+### Controllers
+Controllers are the primary request handlers, located in `src/controllers/`. They bridge the gap between incoming requests (both HTTP and WebSocket) and the business logic contained in services.
 
-- **DataPersistenceService**: Handles all database operations.
-- **SocketService**: Manages WebSocket event handling and broadcasting.
-- **AuthService**: Handles authentication and authorization logic.
+- **HTTP Controllers** (e.g., `auth.controller.js`, `user.controller.js`): Handle requests from Express routes. They process the request, call the appropriate service methods, and formulate the HTTP response.
+- **WebSocket Controller** (`socket.controller.js`): Contains all event handlers for the Socket.IO server. It listens for client events, validates data, and uses services to perform actions before emitting responses or broadcasting to rooms.
 
-Example: `src/services/dataPersistenceService.js`
+Example: `src/controllers/socket.controller.js` handling `ride:newRequest`
 ```javascript
-class DataPersistenceService {
-  async createRideRequest(rideRequestData) {
-    const rideRequest = new RideRequest(rideRequestData);
-    await rideRequest.save();
-    return rideRequest;
-  }
-}
-```
-
-### HTTP Controllers
-HTTP controllers are defined in the route files under `src/routes/`. They handle incoming HTTP requests and send responses.
-
-Example: `src/routes/rideRequest.routes.js`
-```javascript
-router.post('/ride-requests', async (req, res) => {
-  try {
-    const rideRequest = await dataPersistenceService.createRideRequest(req.body);
-    res.status(201).json(rideRequest);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-```
-
-### WebSocket Event Handlers
-WebSocket event handlers are located in `src/services/socketService.js`. They handle events like `ride:newRequest`, `ride:bidPlaced`, etc.
-
-Example: Handling `ride:newRequest` event
-```javascript
+// Inside SocketController.handleUserConnection
 socket.on('ride:newRequest', async (data) => {
   try {
-    const rideRequest = await dataPersistenceService.createRideRequest(data);
-    // Broadcast to drivers
-    socketService.broadcastToDrivers('ride:newRequest', rideRequest);
-    // Emit to user
+    const rideRequest = await rideRequestService.createRideRequest(socket.user.id, data);
     socket.emit('ride:requestCreated', rideRequest);
-  } catch (error) {
+    socketService.broadcastRideRequest(rideRequest);
+  } catch (error) { 
     socket.emit('error', { message: error.message });
   }
 });
 ```
 
-### Utilities
-Utility modules provide reusable functionality and are located in `src/utils/`.
+### Services
+Services contain the core business logic and are located in `src/services/`. They are used by controllers to interact with data models and perform complex operations.
 
-- **SocketConnectionManager**: Manages active WebSocket connections.
-- **Logger**: Centralized logging utility.
-- **Validators**: Validation functions using Zod.
+- **socketService.js**: Manages WebSocket connections, rooms, and broadcasting. It keeps track of connected users and drivers and provides methods for sending targeted messages and broadcasting to rooms.
+- **rideRequest.service.js**: Contains business logic related to ride requests, such as creation, finding available rides, and managing their lifecycle.
 
-Example: `src/utils/socketConnectionManager.js`
-```javascript
-class SocketConnectionManager {
-  constructor() {
-    this.activeConnections = new Map();
-    this.userConnections = new Map();
-    this.driverConnections = new Map();
-  }
-
-  registerUserConnection(socketId, userId) {
-    // ...
-  }
-}
-```
-
-## HTTP Request Flow
+### HTTP Request Flow
 ```mermaid
 sequenceDiagram
     participant Client
     participant Express
     participant Route
+    participant Controller
     participant Service
     participant Model
     Client->>Express: HTTP Request
     Express->>Route: Route Matching
-    Route->>Service: Call Service Method
+    Route->>Controller: Call Controller Method
+    Controller->>Service: Call Service Method
     Service->>Model: Database Operation
     Model-->>Service: Result
-    Service-->>Route: Service Result
-    Route-->>Express: HTTP Response
-    Express-->>Client: Response
+    Service-->>Controller: Service Result
+    Controller-->>Express: Formulate HTTP Response
+    Express-->>Client: Send Response
 ```
 
-## WebSocket Event Flow
+### WebSocket Event Flow
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Socket.IO
-    participant SocketService
-    participant DataService
+    participant Socket.IO Server
+    participant SocketController
+    participant Service
     participant Model
-    Client->>Socket.IO: WebSocket Event
-    Socket.IO->>SocketService: Handle Event
-    SocketService->>DataService: Call Service Method
-    DataService->>Model: Database Operation
-    Model-->>DataService: Result
-    DataService-->>SocketService: Service Result
-    SocketService->>Socket.IO: Emit Event
-    Socket.IO->>Client: Event Response
-    Socket.IO->>Other Clients: Broadcast Event
+    Client->>Socket.IO Server: WebSocket Event (e.g., ride:newRequest)
+    Socket.IO Server->>SocketController: Handle Event
+    SocketController->>Service: Call Service Method (e.g., rideRequestService.create)
+    Service->>Model: Database Operation
+    Model-->>Service: Result
+    Service-->>SocketController: Service Result
+    SocketController->>Socket.IO Server: Emit Event (e.g., socket.emit())
+    Socket.IO Server->>Client: Event Response
+    Socket.IO Server->>Other Clients: Broadcast Event
 ```
 
 ## Real-world Use Cases
 
 ### User Registration
-1. HTTP POST to `/api/users/register`.
-2. Controller in `src/routes/user.routes.js` handles the request.
-3. Uses `AuthService` to register the user.
-4. Returns the created user.
+1. HTTP POST to `/api/auth/register`.
+2. The corresponding route in `src/routes/auth.routes.js` directs the request to the `register` method in `src/controllers/auth.controller.js`.
+3. The controller validates the input and uses the `User` model to create a new user.
+4. Returns a JWT and the created user data.
 
 ### Ride Request Creation
-1. WebSocket event `ride:newRequest` emitted by user.
-2. Handled by `SocketService`.
-3. Uses `DataPersistenceService` to create the ride request.
-4. Broadcasts the request to available drivers.
+1. A connected user emits a `ride:newRequest` event.
+2. The event is handled by the `SocketController`.
+3. It calls the `rideRequest.service.js` to create the ride request in the database.
+4. The `socketService.js` is then used to broadcast the new request to all drivers in the `drivers` room.
 
 ### Bid Placement
-1. WebSocket event `ride:bidPlaced` emitted by driver.
-2. Handled by `SocketService`.
-3. Uses `DataPersistenceService` to save the bid.
-4. Notifies the user about the new bid.
+1. A connected driver emits a `ride:bidPlaced` event.
+2. The `SocketController` handles the event.
+3. It uses the `RideRequest` model to find the request and add the new bid.
+4. The `socketService.js` sends a targeted `ride:bidUpdate` event to the user who created the ride.
 
 ### Ride Acceptance
-1. WebSocket event `ride:accepted` emitted by user.
-2. Handled by `SocketService`.
-3. Uses `DataPersistenceService` to update ride and bid status.
-4. Notifies the driver and user.
+1. The user emits a `ride:bidAccepted` event.
+2. The `SocketController` handles the event.
+3. It updates the `RideRequest` and `Bid` status in the database.
+4. The `socketService.js` notifies the winning driver and broadcasts that bidding is closed to other drivers.
 
 ## Performance Considerations
 - **Connection Management**: Efficient tracking of active connections to minimize lookup time.
