@@ -159,7 +159,72 @@ export const vehicleBatchDeleteSchema = z.object({
 export const vehicleAnalyticsSchema = z.object({
     driverId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid driver ID format').optional(),
     vehicleType: z.enum(vehicleTypeEnum).optional(),
-    dateFrom: z.string().datetime().optional(),
-    dateTo: z.string().datetime().optional(),
+    dateFrom: z.string().date().optional(),
+    dateTo: z.string().date().optional(),
     groupBy: z.enum(['vehicleType', 'comfortLevel', 'priceValue', 'year', 'month']).default('vehicleType')
+});
+
+// Vehicle search for ride validation
+export const vehicleSearchForRideSchema = z.object({
+    rideType: z.enum(vehicleTypeEnum),
+    comfortPreference: z.number().min(1).max(5).int().optional(),
+    farePreference: z.number().min(1).max(5).int().optional(),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    radius: z.number().min(0.1).max(50).default(10), // in kilometers
+    maxFare: z.number().min(0).optional(),
+    sortBy: z.enum(['distance', 'comfortLevel', 'priceValue', 'rating']).default('distance'),
+    limit: z.coerce.number().min(1).max(50).default(20)
+});
+
+// Vehicle statistics query validation
+export const vehicleStatisticsQuerySchema = z.object({
+    vehicleType: z.enum(vehicleTypeEnum).optional(),
+    dateFrom: z.string().date().optional(),
+    dateTo: z.string().date().optional(),
+    groupBy: z.enum(['type', 'comfort', 'price', 'month', 'year']).default('type'),
+    includeUsage: z.boolean().default(true),
+    includeEarnings: z.boolean().default(true)
+});
+
+// Bulk vehicle status update validation
+export const bulkVehicleStatusUpdateSchema = z.object({
+    vehicleIds: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid vehicle ID format'))
+        .min(1, 'At least one vehicle ID is required')
+        .max(100, 'Cannot update more than 100 vehicles at once'),
+    isActive: z.boolean(),
+    reason: z.string().max(200).optional()
+});
+
+// Vehicle allocation optimization validation
+export const vehicleAllocationOptimizationSchema = z.object({
+    algorithm: z.enum(['demand-based', 'location-based', 'rating-based', 'combined']).default('combined'),
+    timeWindow: z.enum(['hour', 'day', 'week']).default('hour'),
+    includeInactive: z.boolean().default(false),
+    maxDistance: z.number().min(0.1).max(100).default(20),
+    testMode: z.boolean().default(false)
+});
+
+// Maintenance recommendations query validation
+export const maintenanceRecommendationsQuerySchema = z.object({
+    vehicleType: z.enum(vehicleTypeEnum).optional(),
+    ageThreshold: z.number().min(1).max(50).default(10), // years
+    usageThreshold: z.number().min(0).default(50000), // km or rides
+    priorityLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+    includeScheduled: z.boolean().default(true),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(20)
+});
+
+// Vehicle by type query validation
+export const vehicleByTypeQuerySchema = z.object({
+    vehicleType: z.enum(vehicleTypeEnum),
+    isActive: z.boolean().optional(),
+    comfortLevel: z.number().min(1).max(5).int().optional(),
+    priceValue: z.number().min(1).max(5).int().optional(),
+    driverId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid driver ID format').optional(),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10),
+    sortBy: z.enum(['make', 'model', 'year', 'comfortLevel', 'priceValue']).default('make'),
+    order: z.enum(['asc', 'desc']).default('asc')
 });

@@ -1,20 +1,20 @@
 import express from 'express';
 import {
-    createRideRequest,
     getRideRequest,
     getUserRideRequests,
     getRideRequestBids,
-    getRideRequestBidsLive,
-    acceptBid,
     getAvailableRideRequests,
-    placeBid
+    getRideRequestAnalytics,
+    bulkCancelRequests,
+    optimizeMatching
 } from '../controllers/rideRequest.controller.js';
 import { 
-    createRideRequestSchema, 
     getRideRequestsQuerySchema, 
     getBidsQuerySchema, 
-    acceptBidSchema,
-    placeBidSchema 
+    availableRideRequestsQuerySchema,
+    rideRequestAnalyticsQuerySchema,
+    bulkCancelRequestsSchema,
+    optimizeMatchingSchema
 } from '../validations/rideRequest.validation.js';
 import { 
     validateRequest, 
@@ -26,11 +26,9 @@ import {
 
 const router = express.Router();
 
-// POST /api/ride-requests - Create a new ride request
-router.post('/', validateRequest(createRideRequestSchema), createRideRequest);
-
 // GET /api/ride-requests/available - Get all available ride requests for drivers
 router.get('/available', 
+    validateQuery(availableRideRequestsQuerySchema),
     getAvailableRideRequests
 );
 
@@ -51,20 +49,14 @@ router.get('/:requestId/bids',
     getRideRequestBids
 );
 
-// GET /api/ride-requests/:requestId/bids/live - Get live bid updates
-router.get('/:requestId/bids/live', 
-    validateParams(requestIdParamSchema), 
-    getRideRequestBidsLive
-);
+// Analytics and Admin Routes
+// GET /api/ride-requests/analytics - Get ride request analytics
+router.get('/analytics', validateQuery(rideRequestAnalyticsQuerySchema), getRideRequestAnalytics);
 
-// POST /api/ride-requests/:requestId/bids - Place a bid on a ride request
-router.post('/:requestId/bids', 
-    validateParams(requestIdParamSchema),
-    validateRequest(placeBidSchema),
-    placeBid
-);
+// POST /api/ride-requests/bulk-cancel - Bulk cancel ride requests
+router.post('/bulk-cancel', validateRequest(bulkCancelRequestsSchema), bulkCancelRequests);
 
-// POST /api/ride-requests/:requestId/bids/:bidId/accept - Accept a specific bid
-router.post('/:requestId/bids/:bidId/accept', acceptBid);
+// POST /api/ride-requests/optimize-matching - Optimize ride matching algorithm
+router.post('/optimize-matching', validateRequest(optimizeMatchingSchema), optimizeMatching);
 
 export default router;

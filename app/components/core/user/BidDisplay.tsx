@@ -1,691 +1,613 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
-  View,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
-  Alert,
-  RefreshControl,
+  SafeAreaView,
+  View,
+  StyleProp,
+  ViewStyle,
   ActivityIndicator,
+  Pressable,
+  TouchableOpacity,
 } from 'react-native';
-import { ThemedView } from '@/components/ThemedView';
+import Slider from '@react-native-community/slider';
 import { ThemedText } from '@/components/ThemedText';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import {
-  API_BASE_URL,
-  API_ENDPOINTS,
-  ERROR_MESSAGES,
-  UserData,
-  RideRequest,
-  Bid,
-  BidSortOption,
-} from '@/utils/userConstants';
 import { useApp } from '@/contexts/AppContext';
-import socketService from '@/services/socketService';
+import type { RideRequest, Bid } from '@/contexts/AppContext';
+import { VEHICLE_TYPES, VEHICLE_TYPE_CONFIG } from '@/utils/constants';
 
-interface BidDisplayProps {
-  currentUser: UserData | null;
-  currentRequest: RideRequest | null;
-  onBidAccepted?: (bid: Bid) => void;
-}
+// --- Animation & Icon Libraries ---
+import Animated, {
+  FadeInDown,
+  LinearTransition,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+  withRepeat,
+  Easing,
+} from 'react-native-reanimated';
+import { MapPin, ArrowRight, Star, Tag, Users, CheckCircle, Phone, MessageCircle, Clock, DollarSign, Shield, ChevronDown } from 'lucide-react-native';
 
-export default function BidDisplay({ 
-  currentUser, 
-  currentRequest, 
-  onBidAccepted 
-}: BidDisplayProps) {
-  const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? 'light'];
-  const { state } = useApp();
-  
-  // Debug logging - moved to useEffect to prevent infinite logging
-  useEffect(() => {
-    console.log('🔍 BidDisplay - currentRequest:', currentRequest ? {
-      id: currentRequest._id,
-      status: currentRequest.status,
-      hasPickup: !!currentRequest.pickupLocation,
-      hasDestination: !!currentRequest.destination
-    } : 'null');
-    console.log('🔍 BidDisplay - state.rideRequests:', state.rideRequests.length, 'requests');
-    console.log('🔍 BidDisplay - state.currentBids:', state.currentBids.length, 'bids');
-  }, [currentRequest, state.rideRequests.length, state.currentBids.length]);
-  
-  // Convert AppContext bids to component format (now they match!)
-  const convertedBids = useMemo(() => {
-    return state.currentBids.map(bid => ({
-      _id: bid._id,
-      driverId: bid.driverId,
-      fareAmount: typeof bid.fareAmount === 'number' && !isNaN(bid.fareAmount) ? bid.fareAmount : 0,
-      bidTime: bid.bidTime,
-      status: 'pending', // Default status for display
-    }));
-  }, [state.currentBids]);
-  
-  const [sortBy] = useState<BidSortOption>('fare-asc');
-  const [isLoading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [acceptingBidId, setAcceptingBidId] = useState<string | null>(null);
-  const lastRequestIdRef = useRef<string | null>(null);
+// --- Type Definitions ---
+type AnimatedPressableProps = {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  onPress?: () => void;
+};
 
-  const styles = StyleSheet.create({
-    container: {
-      flex: 1,
-    },
-    scrollContainer: {
-      padding: 20,
-    },
-    title: {
-      fontSize: 24,
-      fontWeight: '700',
-      textAlign: 'center',
-      marginBottom: 20,
-      color: theme.text,
-    },
-    statusContainer: {
-      borderWidth: 1,
-      borderRadius: 16,
-      padding: 16,
-      marginBottom: 20,
-      backgroundColor: colorScheme === 'dark' ? '#1a1a1a' : '#FFFFFF',
-      borderColor: theme.text + '20',
-      shadowColor: '#000',
-      shadowOffset: {
-        width: 0,
-        height: 2,
-      },
-      shadowOpacity: 0.1,
-      shadowRadius: 3.84,
-      elevation: 5,
-    },
-    statusHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 12,
-    },
-    statusRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    statusIndicator: {
-      width: 12,
-      height: 12,
-      borderRadius: 6,
-      marginRight: 10,
-      shadowColor: '#000',
-      shadowOffset: {
-        width: 0,
-        height: 1,
-      },
-      shadowOpacity: 0.2,
-      shadowRadius: 1.41,
-      elevation: 2,
-    },
-    statusText: {
-      fontSize: 16,
-      fontWeight: '600',
-      color: theme.text,
-    },
-    statusSubtext: {
-      fontSize: 14,
-      fontWeight: '500',
-      opacity: 0.7,
-      color: theme.text,
-    },
-    userInfoContainer: {
-      backgroundColor: colorScheme === 'dark' ? '#2a2a2a' : '#f8f9fa',
-      borderRadius: 8,
-      padding: 12,
-      marginTop: 8,
-    },
-    userInfoText: {
-      fontSize: 14,
-      fontWeight: '500',
-      color: theme.text,
-    },
-    userIdText: {
-      fontSize: 12,
-      opacity: 0.6,
-      color: theme.text,
-      marginTop: 2,
-    },
-    requestInfoContainer: {
-      borderWidth: 1,
-      borderRadius: 12,
-      padding: 16,
-      marginBottom: 20,
-      borderColor: theme.text + '30',
-    },
-    requestId: {
-      fontSize: 16,
-      fontWeight: '600',
-      marginBottom: 8,
-      color: theme.text,
-    },
-    requestRoute: {
-      fontSize: 14,
-      opacity: 0.8,
-      color: theme.text,
-    },
-    statsContainer: {
-      borderWidth: 1,
-      borderRadius: 12,
-      padding: 16,
-      marginBottom: 20,
-      backgroundColor: colorScheme === 'dark' ? '#1a1a1a' : '#f8f9fa',
-      borderColor: theme.text + '30',
-    },
-    statsTitle: {
-      fontSize: 18,
-      fontWeight: '600',
-      marginBottom: 12,
-      color: theme.text,
-    },
-    statsText: {
-      fontSize: 14,
-      marginBottom: 4,
-      color: theme.text,
-    },
-    quickAcceptButton: {
-      backgroundColor: '#28a745',
-      borderRadius: 8,
-      paddingVertical: 12,
-      paddingHorizontal: 16,
-      marginTop: 12,
-      alignItems: 'center',
-    },
-    quickAcceptText: {
-      color: '#FFFFFF',
-      fontSize: 16,
-      fontWeight: '600',
-    },
-    sortContainer: {
-      flexDirection: 'column',
-      marginBottom: 20,
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      borderWidth: 1,
-      borderRadius: 8,
-      borderColor: theme.text + '30',
-    },
-    sortLabel: {
-      fontSize: 16,
-      fontWeight: '500',
-      marginBottom: 12,
-      color: theme.text,
-    },
-    loadingContainer: {
-      alignItems: 'center',
-      padding: 40,
-    },
-    loadingText: {
-      marginTop: 12,
-      fontSize: 16,
-      color: theme.text,
-    },
-    noBidsContainer: {
-      borderWidth: 1,
-      borderRadius: 12,
-      padding: 24,
-      alignItems: 'center',
-      borderColor: theme.text + '30',
-    },
-    noBidsText: {
-      fontSize: 16,
-      textAlign: 'center',
-      marginBottom: 8,
-      color: theme.text,
-    },
-    waitingText: {
-      fontSize: 14,
-      textAlign: 'center',
-      opacity: 0.7,
-      color: theme.text,
-    },
-    bidsContainer: {
-      gap: 12,
-    },
-    bidItem: {
-      borderWidth: 1,
-      borderRadius: 12,
-      padding: 16,
-      position: 'relative',
-      borderColor: theme.text + '30',
-      backgroundColor: theme.background,
-    },
-    bestDealBadge: {
-      position: 'absolute',
-      top: -10,
-      right: -10,
-      backgroundColor: '#28a745',
-      borderRadius: 12,
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-      zIndex: 1,
-    },
-    bestDealText: {
-      fontSize: 12,
-      fontWeight: 'bold',
-      color: '#FFFFFF',
-    },
-    bidHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 8,
-    },
-    driverInfo: {
-      fontSize: 16,
-      fontWeight: '600',
-      color: theme.text,
-    },
-    fareAmount: {
-      fontSize: 18,
-      fontWeight: 'bold',
-      color: '#28a745',
-    },
-    bidTime: {
-      fontSize: 14,
-      marginBottom: 4,
-      color: theme.text,
-      opacity: 0.7,
-    },
-    acceptButton: {
-      backgroundColor: '#007bff',
-      borderRadius: 8,
-      paddingVertical: 12,
-      alignItems: 'center',
-    },
-    disabledButton: {
-      opacity: 0.7,
-    },
-    acceptButtonText: {
-      color: '#FFFFFF',
-      fontSize: 16,
-      fontWeight: '600',
-    },
-    noRequestText: {
-      fontSize: 16,
-      textAlign: 'center',
-      marginTop: 50,
-      opacity: 0.7,
-      color: theme.text,
-    },
-  });
+// --- Reusable Animated Components ---
 
-  // Memoize the bid update request function to reduce re-renders
-  const requestBidUpdates = useCallback((requestId: string, isNewRequest: boolean = false) => {
-    if (!socketService.socket?.connected) return;
-    
-    if (state.isSocketRegistered) {
-      // Only log for new requests to reduce spam
-      if (isNewRequest) {
-        console.log(`📡 Requesting bid updates for request: ${requestId} (new request)`);
-      }
-      socketService.emit('user:requestBidUpdate', { requestId });
-      lastRequestIdRef.current = requestId;
-    } else if (currentUser) {
-      // Try to register user if not registered
-      socketService.registerUser({
-        ...currentUser,
-        userId: currentUser.userId
-      });
-      // Retry after registration attempt
-      setTimeout(() => {
-        if (state.isSocketRegistered) {
-          socketService.emit('user:requestBidUpdate', { requestId });
-          lastRequestIdRef.current = requestId;
-        }
-      }, 1000);
-    }
-  }, [state.isSocketRegistered, currentUser]);
+const AnimatedPressable = ({ children, style, onPress }: AnimatedPressableProps) => {
+  const scale = useSharedValue(1);
 
-  // Effect for new ride requests
-  useEffect(() => {
-    if (!currentRequest?._id) {
-      lastRequestIdRef.current = null;
-      return;
-    }
-    
-    const requestId = currentRequest._id;
-    const isNewRequest = lastRequestIdRef.current !== requestId;
-    
-    if (isNewRequest) {
-      console.log('📡 New ride request detected, requesting bid updates immediately');
-      requestBidUpdates(requestId, true);
-    }
-  }, [currentRequest?._id, requestBidUpdates]);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
-  // Separate effect for connection state changes with debouncing
-  useEffect(() => {
-    if (!currentRequest?._id || !state.isConnected || !state.isSocketRegistered) {
-      return;
-    }
-    
-    // Only trigger if we haven't already requested for this request
-    if (lastRequestIdRef.current !== currentRequest._id) {
-      const timeoutId = setTimeout(() => {
-        if (socketService.socket?.connected && state.isSocketRegistered) {
-          console.log('📡 Connection restored, requesting bid updates');
-          requestBidUpdates(currentRequest._id);
-        }
-      }, 1000);
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [state.isConnected, state.isSocketRegistered, currentRequest?._id, requestBidUpdates]);
-
-  const refreshBids = async () => {
-    if (!currentRequest?._id) return;
-    
-    setIsRefreshing(true);
-    try {
-      console.log('🔄 Refreshing bids, socket connected:', socketService.socket?.connected, 'registered:', state.isSocketRegistered);
-      if (socketService.socket?.connected) {
-        // Always try to refresh, even if not fully registered yet
-        socketService.emit('user:requestBidUpdate', { requestId: currentRequest._id });
-      } else {
-        console.warn('⚠️ Socket not connected during refresh');
-      }
-    } catch (error) {
-      console.error('Error refreshing bids:', error);
-    } finally {
-      setIsRefreshing(false);
-    }
+  const handlePressIn = () => {
+    scale.value = withSpring(0.97);
   };
 
-  const sortBids = useCallback((bidsToSort: Bid[]): Bid[] => {
-    const sorted = [...bidsToSort];
-    switch (sortBy) {
-      case 'fare-asc':
-        return sorted.sort((a, b) => {
-          const fareA = typeof a.fareAmount === 'number' && !isNaN(a.fareAmount) ? a.fareAmount : Infinity;
-          const fareB = typeof b.fareAmount === 'number' && !isNaN(b.fareAmount) ? b.fareAmount : Infinity;
-          return fareA - fareB;
-        });
-      case 'fare-desc':
-        return sorted.sort((a, b) => {
-          const fareA = typeof a.fareAmount === 'number' && !isNaN(a.fareAmount) ? a.fareAmount : -Infinity;
-          const fareB = typeof b.fareAmount === 'number' && !isNaN(b.fareAmount) ? b.fareAmount : -Infinity;
-          return fareB - fareA;
-        });
-      case 'time-asc':
-        return sorted.sort((a, b) => new Date(a.bidTime).getTime() - new Date(b.bidTime).getTime());
-      case 'time-desc':
-        return sorted.sort((a, b) => new Date(b.bidTime).getTime() - new Date(a.bidTime).getTime());
-      default:
-        return sorted;
-    }
-  }, [sortBy]);
-
-  const acceptBid = useCallback(async (bid: Bid) => {
-    if (!currentUser || !currentRequest || acceptingBidId) return;
-    
-    // Validate bid amount
-    if (typeof bid.fareAmount !== 'number' || isNaN(bid.fareAmount) || bid.fareAmount <= 0) {
-      Alert.alert('Error', 'Invalid bid amount. Cannot accept this bid.');
-      return;
-    }
-    
-    Alert.alert(
-      'Accept Bid',
-      `Accept bid of ₹${bid.fareAmount} from driver ${bid.driverId}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Accept',
-          style: 'default',
-          onPress: async () => {
-            setAcceptingBidId(bid._id);
-            try {
-              const response = await fetch(
-                `${API_BASE_URL}${API_ENDPOINTS.ACCEPT_BID(currentRequest._id, bid._id)}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ userId: currentUser.userId })
-                }
-              );
-              
-              const data = await response.json();
-              if (data.success) {
-                onBidAccepted?.(bid);
-                Alert.alert('Success', 'Bid accepted successfully!');
-              } else {
-                Alert.alert('Error', data.message || 'Failed to accept bid');
-              }
-            } catch (error) {
-              console.error('Error accepting bid:', error);
-              Alert.alert('Error', ERROR_MESSAGES.NETWORK_ERROR);
-            } finally {
-              setAcceptingBidId(null);
-            }
-          },
-        },
-      ]
-    );
-  }, [currentUser, currentRequest, acceptingBidId, onBidAccepted]);
-
-  const getBidStats = useCallback(() => {
-    if (convertedBids.length === 0) return null;
-    
-    const fareAmounts = convertedBids
-      .map(bid => bid.fareAmount)
-      .filter(fare => typeof fare === 'number' && !isNaN(fare) && fare > 0);
-    
-    if (fareAmounts.length === 0) return null;
-    
-    const lowestFare = Math.min(...fareAmounts);
-    const highestFare = Math.max(...fareAmounts);
-    const averageFare = fareAmounts.reduce((sum, fare) => sum + fare, 0) / fareAmounts.length;
-    
-    return { total: convertedBids.length, lowestFare, highestFare, averageFare };
-  }, [convertedBids]);
-
-  const acceptLowestBid = () => {
-    if (sortedBids.length > 0) {
-      const lowestBid = sortedBids[0];
-      acceptBid(lowestBid);
-    }
+  const handlePressOut = () => {
+    scale.value = withSpring(1);
   };
 
-  // Memoize sorted bids to prevent unnecessary recalculations
-  const sortedBids = useMemo(() => sortBids(convertedBids), [convertedBids, sortBids]);
-  const bidStats = useMemo(() => getBidStats(), [getBidStats]);
+  return (
+    <Pressable onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut}>
+      <Animated.View style={[style, animatedStyle]}>{children}</Animated.View>
+    </Pressable>
+  );
+};
 
-  const renderBidItem = (bid: Bid, index: number) => {
-    const isLowestBid = index === 0 && sortBy === 'fare-asc';
-    const isAccepting = acceptingBidId === bid._id;
+const AnimatedNumber = ({ value }: { value: number }) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  
+  return (
+    <ThemedText style={[styles.fareAmount, { color: theme.primary }]}>
+      ₹{value || 0}
+    </ThemedText>
+  );
+};
 
-    return (
-      <View key={bid._id} style={styles.bidItem}>
-        {isLowestBid && (
-          <View style={styles.bestDealBadge}>
-            <ThemedText style={styles.bestDealText}>Best Deal!</ThemedText>
-          </View>
-        )}
-        
-        <View style={styles.bidHeader}>
-          <ThemedText style={styles.driverInfo}>
-            Driver {bid.driverId}
-          </ThemedText>
-          <ThemedText style={styles.fareAmount}>
-            {typeof bid.fareAmount === 'number' && !isNaN(bid.fareAmount) ? 
-              `₹${bid.fareAmount}` : 
-              'Invalid Bid'
-            }
-          </ThemedText>
-        </View>
-
-        <ThemedText style={styles.bidTime}>
-          Bid placed: {new Date(bid.bidTime).toLocaleTimeString()}
+const RequestSummaryCard = ({ request }: { request: RideRequest }) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  return (
+    <Animated.View
+      entering={FadeInDown.duration(500)}
+      style={[styles.summaryCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+    >
+      <View style={styles.routeRow}>
+        <MapPin color={theme.primary} size={20} />
+        <ThemedText style={styles.routeText} numberOfLines={1}>
+          {request.pickupLocation.address}
         </ThemedText>
-
-        <TouchableOpacity
-          style={[
-            styles.acceptButton,
-            isAccepting && styles.disabledButton
-          ]}
-          onPress={() => acceptBid(bid)}
-          disabled={isAccepting || !!acceptingBidId}
-        >
-          {isAccepting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <ThemedText style={styles.acceptButtonText}>
-              Accept Bid
-            </ThemedText>
-          )}
-        </TouchableOpacity>
       </View>
-    );
+      <View style={styles.routeArrowContainer}>
+        <View style={[styles.routeLine, { borderColor: theme.border }]} />
+        <ArrowRight color={theme.textSecondary} size={16} />
+      </View>
+      <View style={styles.routeRow}>
+        <MapPin color={theme.primary} size={20} />
+        <ThemedText style={styles.routeText} numberOfLines={1}>
+          {request.destination.address}
+        </ThemedText>
+      </View>
+    </Animated.View>
+  );
+};
+
+const BidCard = ({
+  bid,
+  index,
+  onAccept,
+  isProcessing = false,
+  isDisabled = false,
+}: {
+  bid: Bid;
+  index: number;
+  onAccept: (bidId: string) => void;
+  isProcessing?: boolean;
+  isDisabled?: boolean;
+}) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+
+  const handleAcceptBid = () => {
+    if (isDisabled || isProcessing) return;
+    const bidIdentifier = bid.bidId || bid._id;
+    if (!bidIdentifier) {
+      console.error('[BID_CARD] No valid bid ID found!');
+      return;
+    }
+    onAccept(bidIdentifier);
   };
 
-  if (!currentRequest || !currentRequest._id) {
-    console.log('❌ BidDisplay - No active request found:', {
-      hasCurrentRequest: !!currentRequest,
-      currentRequestId: currentRequest?._id || 'missing',
-      rideRequestsCount: state.rideRequests.length,
-      rideRequests: state.rideRequests.map(req => ({
-        id: req._id,
-        status: req.status,
-        userId: req.userId
-      }))
-    });
+  return (
+    <Animated.View
+      layout={LinearTransition.springify()}
+      entering={FadeInDown.delay(index * 100).duration(600)}
+      style={[styles.bidCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+    >
+      <View style={styles.bidHeader}>
+        <ThemedText style={styles.driverName}>{bid.driverName || 'Driver'}</ThemedText>
+        <View style={styles.driverRating}>
+          <Star color="#FFC107" size={16} fill="#FFC107" />
+          <ThemedText style={styles.ratingText}>{(bid.driverRating || 4.5).toFixed(1)}</ThemedText>
+        </View>
+      </View>
+      <View style={styles.bidDetails}>
+        <View style={styles.bidInfoColumn}>
+          <View style={styles.infoItem}>
+            <Clock color={theme.textSecondary} size={16} />
+            <ThemedText style={styles.infoText}>
+              <ThemedText style={styles.infoValue}>{bid.estimatedArrival || bid.estimatedPickupTime || 5} min</ThemedText>
+            </ThemedText>
+          </View>
+          <View style={styles.infoItem}>
+            <Tag color={theme.textSecondary} size={16} />
+            <AnimatedNumber value={bid.fareAmount} />
+          </View>
+        </View>
+        <AnimatedPressable onPress={handleAcceptBid}>
+          <View
+            style={[
+              styles.acceptButton,
+              {
+                backgroundColor: isDisabled ? theme.card : theme.primary,
+                borderColor: isDisabled ? theme.border : theme.primary,
+                opacity: isDisabled && !isProcessing ? 0.6 : 1,
+              },
+            ]}
+          >
+            {isProcessing ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <ThemedText style={[styles.acceptButtonText, { color: isDisabled ? theme.textSecondary : 'white' }]}>
+                Accept
+              </ThemedText>
+            )}
+          </View>
+        </AnimatedPressable>
+      </View>
+    </Animated.View>
+  );
+};
+
+const WaitingForBids = () => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  const scale = useSharedValue(1);
+
+  useEffect(() => {
+    scale.value = withRepeat(
+      withTiming(1.1, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true
+    );
+  }, [scale]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: 0.7 + (scale.value - 1) * 3, 
+  }));
+
+  return (
+    <Animated.View entering={FadeInDown.duration(800)} style={styles.emptyContainer}>
+      <Animated.View style={animatedStyle}>
+        <Users color={theme.primary} size={48} />
+      </Animated.View>
+      <ThemedText style={styles.emptyTitle}>Finding Drivers...</ThemedText>
+      <ThemedText style={styles.emptySubtitle}>Bids from nearby drivers will appear here shortly.</ThemedText>
+    </Animated.View>
+  );
+};
+
+const AcceptedRideStatus = ({ request, acceptedBid }: { request: RideRequest; acceptedBid: Bid | undefined }) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  const scale = useSharedValue(0);
+
+  useEffect(() => {
+    scale.value = withSpring(1, { damping: 12, stiffness: 120 });
+  }, [scale]);
+
+  const animatedCheckmarkStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  if (!acceptedBid) {
     return (
-      <ThemedView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContainer}>
-          <ThemedText style={styles.noRequestText}>
-            No active ride request found.
-          </ThemedText>
-        </ScrollView>
-      </ThemedView>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={theme.primary} />
+        <ThemedText style={styles.loadingText}>Loading driver details...</ThemedText>
+      </View>
     );
   }
 
   return (
-    <ThemedView style={styles.container}>
-      <ScrollView 
-        contentContainerStyle={styles.scrollContainer}
-        refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={refreshBids} />
-        }
-      >
-        <ThemedText style={styles.title}>Incoming Bids</ThemedText>
+    <Animated.View entering={FadeInDown.duration(500)}>
+      <Animated.View style={[styles.successHeader, { backgroundColor: theme.successBackground }]}>
+        <Animated.View style={animatedCheckmarkStyle}>
+          <CheckCircle color={theme.primary} size={32} />
+        </Animated.View>
+        <View style={styles.successTextContainer}>
+          <ThemedText style={[styles.successTitle, { color: theme.primary }]}>Ride Confirmed!</ThemedText>
+          <ThemedText style={styles.successSubtitle}>Your driver is on the way.</ThemedText>
+        </View>
+      </Animated.View>
 
-        {/* Connection Status */}
-        <View style={styles.statusContainer}>
-          <View style={styles.statusHeader}>
-            <View style={styles.statusRow}>
-              <View
-                style={[
-                  styles.statusIndicator,
-                  {
-                    backgroundColor: (state.isConnected || socketService.socket?.connected) ? '#28a745' : '#dc3545'
-                  }
-                ]}
-              />
-              <View>
-                <ThemedText style={styles.statusText}>
-                  {(state.isConnected || socketService.socket?.connected) ? 'Connected' : 'Disconnected'}
-                </ThemedText>
-                <ThemedText style={styles.statusSubtext}>
-                  {state.isSocketRegistered ? 'Registered & Ready' : 'Connecting...'}
-                </ThemedText>
-              </View>
-            </View>
-            {/* <View style={[styles.statusIndicator, { 
-              backgroundColor: state.isSocketRegistered ? '#28a745' : '#ffc107',
-              width: 8,
-              height: 8,
-              marginRight: 0
-            }]} /> */}
+      <Animated.View entering={FadeInDown.delay(200).duration(500)} style={[styles.driverCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={styles.driverHeader}>
+          <View>
+            <ThemedText style={styles.driverLabel}>Your Driver</ThemedText>
+            <ThemedText style={styles.driverName}>{acceptedBid.driverName || 'N/A'}</ThemedText>
           </View>
-          
-          {currentUser && (
-            <View style={styles.userInfoContainer}>
-              <ThemedText style={styles.userInfoText}>
-                👤 {currentUser.name}
-              </ThemedText>
-              <ThemedText style={styles.userIdText}>
-                ID: {currentUser.userId}
-              </ThemedText>
+          <View style={styles.driverRating}>
+            <Star color="#FFD700" size={16} fill="#FFD700" />
+            <ThemedText style={styles.ratingText}>{(acceptedBid.driverRating || 5.0).toFixed(1)}</ThemedText>
+          </View>
+        </View>
+
+        <View style={[styles.rideDetailsGrid, { borderTopColor: theme.border }]}>
+          <View style={styles.gridItem}>
+            <Clock size={20} color={theme.primary} />
+            <ThemedText style={styles.gridLabel}>Arrives in</ThemedText>
+            <ThemedText style={styles.gridValue}>{acceptedBid.estimatedArrival || 5} min</ThemedText>
+          </View>
+          <View style={styles.gridItem}>
+            <Tag size={20} color={theme.primary} />
+            <ThemedText style={styles.gridLabel}>Final Fare</ThemedText>
+            <ThemedText style={styles.gridValue}>₹{acceptedBid.fareAmount}</ThemedText>
+          </View>
+          <View style={styles.gridItem}>
+            <Users size={20} color={theme.primary} />
+            <ThemedText style={styles.gridLabel}>Vehicle</ThemedText>
+            <ThemedText style={styles.gridValue}>{acceptedBid.vehicleType || 'Taxi'}</ThemedText>
+          </View>
+        </View>
+
+        <View style={styles.actionButtons}>
+          <AnimatedPressable onPress={() => console.log('Call driver')}>
+            <View style={[styles.actionButton, styles.callButton, { backgroundColor: theme.primary }]}>
+              <Phone color="white" size={18} />
+              <ThemedText style={styles.actionButtonText}>Call</ThemedText>
             </View>
-          )}
+          </AnimatedPressable>
+          <AnimatedPressable onPress={() => console.log('Message driver')}>
+            <View style={[styles.actionButton, { borderColor: theme.border }]}>
+              <MessageCircle color={theme.primary} size={18} />
+              <ThemedText style={[styles.actionButtonText, { color: theme.primary }]}>Message</ThemedText>
+            </View>
+          </AnimatedPressable>
         </View>
+      </Animated.View>
+    </Animated.View>
+  );
+};
 
-        {/* Request Info */}
-        <View style={styles.requestInfoContainer}>
-          <ThemedText style={styles.requestId}>
-            Request ID: {currentRequest._id}
-          </ThemedText>
-          <ThemedText style={styles.requestRoute}>
-            From: {currentRequest.pickupLocation.address}
-          </ThemedText>
-          <ThemedText style={styles.requestRoute}>
-            To: {currentRequest.destination.address}
-          </ThemedText>
-        </View>
+// --- NEW: Smart Sorting Sliders Component ---
+const PreferenceSliders = ({
+  pricePreference,
+  setPricePreference,
+  comfortPreference,
+  setComfortPreference,
+}:{
+  pricePreference: number;
+  setPricePreference: (value: number) => void;
+  comfortPreference: number;
+  setComfortPreference: (value: number) => void;
+}) => {
+    const theme = Colors[useColorScheme() ?? 'light'];
+    const [isExpanded, setIsExpanded] = useState(false);
+    const rotation = useSharedValue(0);
+    const height = useSharedValue(0);
 
-        {/* Bid Stats */}
-        {bidStats && (
-          <View style={styles.statsContainer}>
-            <ThemedText style={styles.statsTitle}>Bid Statistics</ThemedText>
-            <ThemedText style={styles.statsText}>
-              Total Bids: {bidStats.total}
-            </ThemedText>
-            <ThemedText style={styles.statsText}>
-              Lowest Fare: ₹{bidStats.lowestFare}
-            </ThemedText>
-            <ThemedText style={styles.statsText}>
-              Highest Fare: ₹{bidStats.highestFare}
-            </ThemedText>
-            <ThemedText style={styles.statsText}>
-              Average Fare: ₹{bidStats.averageFare.toFixed(2)}
-            </ThemedText>
-            
-            {sortedBids.length > 0 && (
-              <TouchableOpacity
-                style={styles.quickAcceptButton}
-                onPress={acceptLowestBid}
-                disabled={!!acceptingBidId}
-              >
-                <ThemedText style={styles.quickAcceptText}>
-                  Accept Lowest Bid (₹{bidStats.lowestFare})
-                </ThemedText>
-              </TouchableOpacity>
+    const toggleExpansion = () => {
+        setIsExpanded(!isExpanded);
+    };
+    
+    useEffect(() => {
+        rotation.value = withTiming(isExpanded ? 180 : 0, { duration: 300 });
+        height.value = withTiming(isExpanded ? 150 : 0, { duration: 300 });
+    }, [isExpanded, rotation, height]);
+
+    const animatedChevronStyle = useAnimatedStyle(() => ({
+        transform: [{ rotate: `${rotation.value}deg` }],
+    }));
+
+    const animatedContainerStyle = useAnimatedStyle(() => ({
+        height: height.value,
+        overflow: 'hidden',
+    }));
+
+    const getPriceLabel = (value: number) => {
+        if (value <= 2) return "Budget Focused";
+        if (value === 3) return "Balanced";
+        return "Premium Preferred";
+    };
+
+    const getComfortLabel = (value: number) => {
+        if (value <= 2) return "Basic Comfort";
+        if (value === 3) return "Standard";
+        return "High Comfort";
+    };
+
+    return (
+        <Animated.View entering={FadeInDown.delay(100).duration(500)} style={[styles.sliderSection, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <TouchableOpacity onPress={toggleExpansion} style={styles.sliderSectionHeader}>
+                <ThemedText style={styles.sectionTitle}>Customize Your Sort</ThemedText>
+                <Animated.View style={animatedChevronStyle}>
+                    <ChevronDown color={theme.textSecondary} size={20} />
+                </Animated.View>
+            </TouchableOpacity>
+            <Animated.View style={animatedContainerStyle}>
+                <View style={styles.sliderContainer}>
+                    <View style={styles.sliderHeader}>
+                        <DollarSign color={theme.textSecondary} size={18} />
+                        <ThemedText style={styles.sliderTitle}>Price Preference</ThemedText>
+                        <ThemedText style={styles.sliderLabel}>{getPriceLabel(pricePreference)}</ThemedText>
+                    </View>
+                    <Slider
+                        value={pricePreference}
+                        onValueChange={setPricePreference}
+                        minimumValue={1}
+                        maximumValue={5}
+                        step={1}
+                        minimumTrackTintColor={theme.primary}
+                        maximumTrackTintColor={theme.border}
+                        thumbTintColor={theme.primary}
+                    />
+                </View>
+                <View style={styles.sliderContainer}>
+                    <View style={styles.sliderHeader}>
+                        <Shield color={theme.textSecondary} size={18} />
+                        <ThemedText style={styles.sliderTitle}>Comfort Preference</ThemedText>
+                        <ThemedText style={styles.sliderLabel}>{getComfortLabel(comfortPreference)}</ThemedText>
+                    </View>
+                     <Slider
+                        value={comfortPreference}
+                        onValueChange={setComfortPreference}
+                        minimumValue={1}
+                        maximumValue={5}
+                        step={1}
+                        minimumTrackTintColor={theme.primary}
+                        maximumTrackTintColor={theme.border}
+                        thumbTintColor={theme.primary}
+                    />
+                </View>
+            </Animated.View>
+        </Animated.View>
+    );
+};
+
+
+// --- Main Screen Component ---
+export default function BidDisplay() {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  const { rideRequests, acceptBid, addNotification, setError } = useApp();
+  
+  const [processingBidId, setProcessingBidId] = useState<string | null>(null);
+  const [pricePreference, setPricePreference] = useState(3);
+  const [comfortPreference, setComfortPreference] = useState(3);
+  const timeoutRef = useRef<number | null>(null);
+
+  const activeRideRequest = useMemo(() => 
+    rideRequests.find((r) => ['pending', 'bidding', 'accepted'].includes(r.status) && r.status !== 'cancelled') || null,
+  [rideRequests]);
+
+  // NEW: Smart sorting logic
+  const sortedBids = useMemo(() => {
+    const pendingBids = (activeRideRequest?.bids || []).filter((bid: Bid) => bid.status === 'pending');
+
+    if (pendingBids.length < 2) {
+      return pendingBids;
+    }
+    
+    // 1. Find min/max fare for normalization
+    const fares = pendingBids.map(bid => bid.fareAmount || 0);
+    const minFare = Math.min(...fares);
+    const maxFare = Math.max(...fares);
+    const fareRange = maxFare - minFare;
+
+    // 2. Find max comfort level for normalization (assuming from config)
+    const maxComfortLevel = Math.max(...Object.values(VEHICLE_TYPE_CONFIG).map((v: any) => v.comfort || 1), 5);
+
+    // 3. Calculate dynamic weights based on slider preferences
+    const priceWeight = 0.6 + (3 - pricePreference) * 0.1; // Range: 0.4 to 0.8
+    const comfortWeight = 0.4 + (comfortPreference - 3) * 0.1; // Range: 0.2 to 0.6
+    const totalWeight = priceWeight + comfortWeight;
+
+    const finalPriceWeight = totalWeight > 0 ? priceWeight / totalWeight : 0.5;
+    const finalComfortWeight = totalWeight > 0 ? comfortWeight / totalWeight : 0.5;
+
+    // 4. Score and sort bids
+    return pendingBids
+      .map(bid => {
+        // Score for price (higher score for lower price)
+        const priceScore = fareRange > 0 ? (maxFare - (bid.fareAmount || 0)) / fareRange : 1;
+        
+        // Score for comfort (higher score for more comfort)
+        const comfortLevel = VEHICLE_TYPE_CONFIG[bid.vehicleType as keyof typeof VEHICLE_TYPE_CONFIG]?.comfortLevel || 2;
+        const comfortScore = comfortLevel / maxComfortLevel;
+
+        // Calculate final weighted score
+        const score = (priceScore * finalPriceWeight) + (comfortScore * finalComfortWeight);
+
+        return { ...bid, score };
+      })
+      .sort((a, b) => b.score - a.score); // Sort descending by highest score
+  }, [activeRideRequest?.bids, pricePreference, comfortPreference]);
+
+  const isAcceptingBid = !!processingBidId;
+  
+  const handleAcceptBid = async (bidId: string) => {
+    if (!activeRideRequest || isAcceptingBid) return;
+
+    setProcessingBidId(bidId);
+    
+    try {
+      acceptBid(activeRideRequest.requestId, bidId);
+      addNotification({
+        type: 'success',
+        message: 'Ride confirmed! Your driver is on the way.',
+        createdAt: new Date(),
+      });
+      
+      timeoutRef.current = setTimeout(() => {
+        setProcessingBidId(null);
+        setError({ message: "Confirmation is taking longer than usual. Please check your ride status." });
+      }, 8000);
+
+    } catch (error) {
+      console.error('[BID_DISPLAY] Error accepting bid:', error);
+      setError({ message: 'Failed to accept bid. Please try again.' });
+      setProcessingBidId(null);
+    }
+  };
+
+  useEffect(() => {
+    const rideStatus = activeRideRequest?.status;
+    if (rideStatus === 'accepted' && timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+        setProcessingBidId(null);
+    }
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [activeRideRequest?.status]);
+
+  useEffect(() => {
+    if (!activeRideRequest && processingBidId) {
+      console.log('[BID_DISPLAY] No active ride request found, clearing processing state');
+      setProcessingBidId(null);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    }
+  }, [activeRideRequest, processingBidId]);
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+        <Animated.View entering={FadeInDown.duration(400)}>
+          <ThemedText style={styles.headerTitle}>
+            {activeRideRequest?.status === 'accepted' ? 'Your Confirmed Ride' : 'Incoming Bids'}
+          </ThemedText>
+        </Animated.View>
+
+        {activeRideRequest && <RequestSummaryCard request={activeRideRequest} />}
+
+        {activeRideRequest?.status === 'accepted' ? (
+          <AcceptedRideStatus
+            request={activeRideRequest}
+            acceptedBid={activeRideRequest.bids?.find((bid) => bid.status === 'accepted')}
+          />
+        ) : (
+          <>
+            {activeRideRequest && sortedBids.length > 0 && (
+                <PreferenceSliders 
+                    pricePreference={pricePreference}
+                    setPricePreference={setPricePreference}
+                    comfortPreference={comfortPreference}
+                    setComfortPreference={setComfortPreference}
+                />
             )}
-          </View>
-        )}
-
-        {/* Loading State */}
-        {isLoading && (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.tint} />
-            <ThemedText style={styles.loadingText}>Loading bids...</ThemedText>
-          </View>
-        )}
-
-        {/* No Bids State */}
-        {!isLoading && convertedBids.length === 0 && (
-          <View style={styles.noBidsContainer}>
-            <ThemedText style={styles.noBidsText}>
-              No bids received yet
-            </ThemedText>
-            <ThemedText style={styles.waitingText}>
-              Waiting for drivers to respond...
-            </ThemedText>
-          </View>
-        )}
-
-        {/* Bids List */}
-        {!isLoading && convertedBids.length > 0 && (
-          <View style={styles.bidsContainer}>
-            {sortedBids.map((bid, index) => renderBidItem(bid, index))}
-          </View>
+            <Animated.View entering={FadeInDown.delay(200).duration(500)}>
+              <ThemedText style={styles.dynamicSectionTitle}>
+                {sortedBids.length > 0 ? `${sortedBids.length} Drivers Responded` : 'Waiting for Drivers'}
+              </ThemedText>
+            </Animated.View>
+            {!activeRideRequest ? (
+                <Animated.View entering={FadeInDown.delay(400).duration(500)} style={styles.emptyContainer}>
+                    <ThemedText style={styles.emptyTitle}>No Active Request</ThemedText>
+                    <ThemedText style={styles.emptySubtitle}>Request a ride to see available bids.</ThemedText>
+                </Animated.View>
+            ) : sortedBids.length === 0 ? (
+              <WaitingForBids />
+            ) : (
+              sortedBids.map((bid: Bid, index: number) => (
+                <BidCard
+                  key={bid.bidId || bid._id}
+                  bid={bid}
+                  index={index}
+                  onAccept={handleAcceptBid}
+                  isProcessing={processingBidId === (bid.bidId || bid._id)}
+                  isDisabled={isAcceptingBid || activeRideRequest?.status === 'accepted'}
+                />
+              ))
+            )}
+          </>
         )}
       </ScrollView>
-    </ThemedView>
+    </SafeAreaView>
   );
 }
+
+// --- Stylesheet ---
+const styles = StyleSheet.create({
+  safeArea: { flex: 1 },
+  scrollContainer: { padding: 16, paddingBottom: 50 },
+  headerTitle: { fontSize: 28, fontWeight: 'bold', marginBottom: 16 },
+  dynamicSectionTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, marginTop: 24 },
+  
+  // Summary Card
+  summaryCard: { borderRadius: 16, padding: 16, marginBottom: 0, borderWidth: 1 },
+  routeRow: { flexDirection: 'row', alignItems: 'center' },
+  routeText: { fontSize: 15, marginLeft: 12, flex: 1 },
+  routeArrowContainer: { alignSelf: 'flex-start', marginVertical: 8, marginLeft: 9, flexDirection: 'row', alignItems: 'center' },
+  routeLine: { height: 20, width: 2, marginRight: 8 },
+
+  // --- NEW: Preference Sliders Styles ---
+  sliderSection: { borderRadius: 16, borderWidth: 1, marginTop: 24, overflow: 'hidden' },
+  sliderSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, },
+  sectionTitle: { fontSize: 16, fontWeight: '600', },
+  sliderContainer: { paddingHorizontal: 16, paddingBottom: 4, },
+  sliderHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4, },
+  sliderTitle: { fontWeight: '600', fontSize: 14 },
+  sliderLabel: { marginLeft: 'auto', fontSize: 13, opacity: 0.7 },
+
+  // Bid Card
+  bidCard: { borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1, overflow: 'hidden' },
+  bidHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  driverName: { fontSize: 18, fontWeight: '600' },
+  driverRating: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  ratingText: { fontSize: 14, fontWeight: 'bold' },
+  bidDetails: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  bidInfoColumn: { gap: 8 },
+  infoItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  infoText: { fontSize: 16 },
+  infoValue: { fontWeight: 'bold' },
+  fareAmount: { fontSize: 22, fontWeight: 'bold' },
+  acceptButton: { height: 48, width: 120, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 1 },
+  acceptButtonText: { fontWeight: 'bold', fontSize: 16 },
+
+  // Empty/Waiting State
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, paddingHorizontal: 20 },
+  emptyTitle: { fontSize: 20, fontWeight: '700', marginTop: 20, marginBottom: 8 },
+  emptySubtitle: { fontSize: 14, textAlign: 'center', opacity: 0.7, lineHeight: 20 },
+  
+  // Loading State
+  loadingContainer: { justifyContent: 'center', alignItems: 'center', paddingVertical: 40 },
+  loadingText: { fontSize: 16, marginTop: 16, opacity: 0.7 },
+
+  // Accepted Ride Status
+  successHeader: { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, borderWidth: 1, borderColor: 'transparent' , marginTop: 16, marginBottom: 16 },
+  successTextContainer: { marginLeft: 12 },
+  successTitle: { fontSize: 18, fontWeight: 'bold' },
+  successSubtitle: { fontSize: 14, opacity: 0.8 },
+  driverCard: { borderRadius: 16, marginTop: -1, borderWidth: 1, overflow: 'hidden' },
+  driverHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: 20 },
+  driverLabel: { fontSize: 13, opacity: 0.6, marginBottom: 2 },
+  rideDetailsGrid: { flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, paddingVertical: 16 },
+  gridItem: { alignItems: 'center', gap: 6, flex: 1 },
+  gridLabel: { fontSize: 12, opacity: 0.6 },
+  gridValue: { fontSize: 15, fontWeight: '600' },
+  actionButtons: { flexDirection: 'row', padding: 20, paddingTop: 4, gap: 12 },
+  actionButton: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8, padding: 14, borderRadius: 12, borderWidth: 1 },
+  callButton: { borderColor: 'transparent', padding: 14 },
+  actionButtonText: { fontSize: 15, fontWeight: 'bold' },
+});

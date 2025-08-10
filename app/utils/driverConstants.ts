@@ -5,44 +5,7 @@ export const API_BASE_URL = `http://${process.env.EXPO_PUBLIC_MAIN_URL}:8000/api
 export const SOCKET_URL = `http://${process.env.EXPO_PUBLIC_MAIN_URL}:8000`; // Change to your backend URL
 
 // API Endpoints
-export const API_ENDPOINTS = {
-  // Driver endpoints
-  DRIVER_REGISTER: '/drivers/register',
-  DRIVER_PROFILE: (driverId: string) => `/drivers/profile/${driverId}`,
-  DRIVER_EARNINGS: (driverId: string) => `/drivers/${driverId}/earnings`,
-  DRIVER_RIDE_HISTORY: (driverId: string) => `/drivers/${driverId}/rides`,
-  UPDATE_DRIVER_STATUS: (driverId: string) => `/drivers/${driverId}/status`,
-  UPDATE_DRIVER_LOCATION: (driverId: string) => `/drivers/${driverId}/location`,
-  
-  // Ride request endpoints
-  AVAILABLE_REQUESTS: '/ride-requests/available',
-  PLACE_BID: (requestId: string) => `/ride-requests/${requestId}/bids`,
-  DRIVER_BIDS: (driverId: string) => `/drivers/${driverId}/bids`,
-  
-  // Vehicle endpoints
-  UPDATE_VEHICLE_INFO: (driverId: string) => `/drivers/${driverId}/vehicle`,
-};
 
-// Socket Events (match backend events)
-export const SOCKET_EVENTS = {
-  // Connection events
-  CONNECT: 'connect',
-  DISCONNECT: 'disconnect',
-  ERROR: 'error',
-  
-  // Driver events
-  DRIVER_REGISTER: 'driver:register',
-  DRIVER_REGISTERED: 'driver:registered',
-  NEW_RIDE_REQUEST: 'newRideRequest',
-  PLACE_BID: 'driver:placeBid',
-  BID_CONFIRMED: 'bid:confirmed',
-  BID_ACCEPTED: 'bid:accepted',
-  BIDDING_CLOSED: 'bidding:closed',
-  
-  // Status updates
-  UPDATE_STATUS: 'driver:updateStatus',
-  UPDATE_LOCATION: 'driver:updateLocation',
-};
 
 // Driver Status Constants (match backend constants)
 export const DRIVER_STATUS = {
@@ -68,6 +31,64 @@ export const BID_STATUS = {
   EXPIRED: 'expired',
 } as const;
 
+// Vehicle Types - Updated to match backend exactly
+export const VEHICLE_TYPES = {
+  TAXI: 'Taxi',
+  AC_TAXI: 'AC_Taxi', 
+  BIKE: 'Bike',
+  EBIKE: 'EBike',
+  ERICKSHAW: 'ERiksha',
+  AUTO: 'Auto'
+} as const;
+
+export type VehicleType = typeof VEHICLE_TYPES[keyof typeof VEHICLE_TYPES];
+
+// Vehicle Type Configurations with comfort and price values
+export const VEHICLE_TYPE_CONFIG = {
+  [VEHICLE_TYPES.TAXI]: {
+    displayName: 'Taxi',
+    description: 'Standard taxi service',
+    comfortLevel: 3,
+    priceValue: 3,
+    icon: '🚕'
+  },
+  [VEHICLE_TYPES.AC_TAXI]: {
+    displayName: 'AC Taxi', 
+    description: 'Air-conditioned taxi',
+    comfortLevel: 4,
+    priceValue: 4,
+    icon: '🚖'
+  },
+  [VEHICLE_TYPES.BIKE]: {
+    displayName: 'Bike',
+    description: 'Motorcycle ride',
+    comfortLevel: 2,
+    priceValue: 1,
+    icon: '🏍️'
+  },
+  [VEHICLE_TYPES.EBIKE]: {
+    displayName: 'E-Bike',
+    description: 'Electric bike',
+    comfortLevel: 2,
+    priceValue: 2,
+    icon: '🛵'
+  },
+  [VEHICLE_TYPES.ERICKSHAW]: {
+    displayName: 'E-Rickshaw',
+    description: 'Electric rickshaw',
+    comfortLevel: 3,
+    priceValue: 2,
+    icon: '🛺'
+  },
+  [VEHICLE_TYPES.AUTO]: {
+    displayName: 'Auto Rickshaw',
+    description: 'Traditional auto rickshaw',
+    comfortLevel: 2,
+    priceValue: 2,
+    icon: '🛺'
+  }
+} as const;
+
 // Validation Constants
 export const VALIDATION = {
   MIN_NAME_LENGTH: 2,
@@ -88,7 +109,7 @@ export const DEFAULT_COORDINATES = {
   address: 'New York, NY',
 };
 
-// Vehicle types and makes
+// Vehicle makes
 export const VEHICLE_MAKES = [
   'Toyota', 'Honda', 'Ford', 'Chevrolet', 'Nissan', 'BMW', 'Mercedes-Benz',
   'Audi', 'Volkswagen', 'Hyundai', 'Kia', 'Mazda', 'Subaru', 'Lexus', 'Other'
@@ -173,130 +194,3 @@ export const SCREEN_NAMES = {
   VEHICLE_INFO: 'VehicleInfo',
   DRIVER_PROFILE: 'DriverProfile',
 };
-
-// Driver type definitions
-export interface DriverData {
-  driverId?: string;
-  name: string;
-  phone: string;
-  email?: string;
-  vehicleInfo?: VehicleInfo;
-  currentLocation?: Location;
-  status?: string;
-  rating?: number;
-  totalRides?: number;
-  totalEarnings?: number;
-  createdAt?: string;
-}
-
-// Driver type definitions - Aligned with backend models
-export interface Location {
-  address: string;
-  coordinates: {
-    latitude: number;
-    longitude: number;
-  };
-}
-
-export interface VehicleInfo {
-  make: string;
-  model: string;
-  year: number;
-  color: string;
-  licensePlate: string;
-}
-
-export interface RideRequest {
-  _id: string;
-  userId: string;
-  pickupLocation: Location;
-  destination: Location;
-  status: 'pending' | 'bidding' | 'accepted' | 'completed' | 'cancelled';
-  estimatedDistance?: number; // in kilometers
-  estimatedDuration?: number; // in minutes
-  bids: Bid[];
-  acceptedBid?: AcceptedBid;
-  createdAt: string;
-  updatedAt: string;
-  user?: UserInfo;
-  // Legacy support for components that might still use requestId
-  requestId?: string;
-}
-
-export interface Bid {
-  _id: string;
-  driverId: string;
-  fareAmount: number;
-  bidTime: string; // ISO date string
-  rank?: number;
-  isLowest?: boolean;
-  isHighest?: boolean;
-  driver?: DriverInfo;
-}
-
-export interface AcceptedBid {
-  driverId: string;
-  fareAmount: number;
-  bidTime: string;
-}
-
-export interface DriverInfo {
-  driverId: string;
-  name: string;
-  phone?: string;
-  email?: string;
-  vehicleInfo?: VehicleInfo;
-  currentLocation?: Location;
-  status: 'available' | 'busy' | 'offline';
-  rating: number;
-  totalEarnings?: number;
-  totalRides?: number;
-  isOnline?: boolean;
-  lastSeen?: string;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface UserInfo {
-  userId: string;
-  name: string;
-  phone?: string;
-  email?: string;
-  defaultLocation?: Location;
-  rating: number;
-  totalRides: number;
-  isOnline?: boolean;
-  lastSeen?: string;
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-export interface Earnings {
-  totalEarnings: number;
-  todayEarnings: number;
-  weeklyEarnings: number;
-  monthlyEarnings: number;
-  totalRides: number;
-  completedRides: number;
-  averageRating: number;
-  ridesThisWeek: number;
-  ridesThisMonth: number;
-}
-
-export interface ActiveRide {
-  rideId: string;
-  requestId: string;
-  driverId: string;
-  userId: string;
-  pickupLocation: Location;
-  destination: Location;
-  fareAmount: number;
-  status: string;
-  startTime?: string;
-  endTime?: string;
-  user?: UserInfo;
-}
-
-export type DriverStatusType = typeof DRIVER_STATUS[keyof typeof DRIVER_STATUS];
-export type RideStatusType = typeof RIDE_STATUS[keyof typeof RIDE_STATUS];
-export type BidStatusType = typeof BID_STATUS[keyof typeof BID_STATUS];

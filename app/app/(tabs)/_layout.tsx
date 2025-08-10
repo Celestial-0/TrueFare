@@ -11,31 +11,31 @@ import { useApp } from '@/contexts/AppContext';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const { state } = useApp();
+  const { currentUser, currentDriver, userType, socketConnected } = useApp();
 
   // Force re-render when userType changes to ensure tabs update immediately
   useEffect(() => {
-    console.log('🎯 Tab Layout - User type changed to:', state.userType, {
-      hasCurrentUser: !!state.currentUser,
-      hasCurrentDriver: !!state.currentDriver,
-      isConnected: state.isConnected
+    console.log('🎯 Tab Layout - User type changed to:', userType, {
+      hasCurrentUser: !!currentUser,
+      hasCurrentDriver: !!currentDriver,
+      socketConnected: socketConnected
     });
-  }, [state.userType, state.currentUser, state.currentDriver, state.isConnected]);
+  }, [userType, currentUser, currentDriver, socketConnected]);
 
   // Force navigation to correct tab when user type changes
   useEffect(() => {
-    if (state.userType === 'driver' && state.currentDriver) {
+    if (userType === 'driver' && currentDriver) {
       console.log('🎯 Tab Layout - Forcing navigation to drivers tab');
       router.navigate('/drivers');
-    } else if (state.userType === 'user' && state.currentUser) {
+    } else if (userType === 'user' && currentUser) {
       console.log('🎯 Tab Layout - Forcing navigation to users tab');
       router.navigate('/users');
     }
-  }, [state.userType, state.currentDriver, state.currentUser]);
+  }, [userType, currentDriver, currentUser]);
 
   return (
     <Tabs
-      initialRouteName={state.currentDriver ? 'drivers' : undefined}
+      initialRouteName={currentDriver ? 'drivers' : undefined}
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
@@ -55,7 +55,7 @@ export default function TabLayout() {
           title: 'Users',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
           // Hide the tab if driver is logged in AND user type is explicitly 'driver'
-          href: (state.currentDriver && state.userType === 'driver') ? null : '/users',
+          href: (currentDriver && userType === 'driver') ? null : '/users',
         }}
       />
       <Tabs.Screen
@@ -64,7 +64,7 @@ export default function TabLayout() {
           title: 'Drivers',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
           // Hide the tab if user is logged in AND user type is explicitly 'user'
-          href: (state.currentUser && state.userType === 'user') ? null : '/drivers',
+          href: (currentUser && userType === 'user') ? null : '/drivers',
         }}
       />
     </Tabs>

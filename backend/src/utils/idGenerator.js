@@ -37,11 +37,19 @@ export const generateDriverId = () => {
 };
 
 /**
+ * Generate a unique Vehicle ID
+ * @returns {string} - The generated vehicle ID
+ */
+export const generateVehicleId = () => {
+    return generateUniqueId('VEHICLE', true); // Use short format for vehicles
+};
+
+/**
  * Generate a unique Request ID
  * @returns {string} - The generated request ID
  */
 export const generateRequestId = () => {
-    return generateUniqueId('REQ', false); // Use full format for requests
+    return generateUniqueId('REQUEST', true); // Use short format for requests
 };
 
 /**

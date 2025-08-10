@@ -16,7 +16,9 @@ const locationSchema = z.object({
 export const userRegistrationSchema = z.object({
     userId: z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format').optional(),
     name: z.string().min(1).max(100).trim(),
-    email: z.string().email().optional().or(z.literal('')),
+    email: z.string().optional().refine((val) => !val || z.email().safeParse(val).success, {
+        message: 'Invalid email format'
+    }).default(''),
     phone: z.string().regex(/^[+]?[\d\s\-\(\)]+$/, 'Invalid phone number format').min(10).max(20).trim(),
     defaultLocation: locationSchema.optional(),
     preferences: z.object({
@@ -34,7 +36,9 @@ export const userRegistrationSchema = z.object({
 // User update validation
 export const userUpdateSchema = z.object({
     name: z.string().min(1).max(100).trim().optional(),
-    email: z.string().email().optional().or(z.literal('')),
+    email: z.string().optional().refine((val) => !val || z.email().safeParse(val).success, {
+        message: 'Invalid email format'
+    }).default(''),
     phone: z.string().regex(/^[+]?[\d\s\-\(\)]+$/, 'Invalid phone number format').min(10).max(20).trim().optional(),
     defaultLocation: locationSchema.optional(),
     preferences: z.object({
@@ -51,9 +55,13 @@ export const userUpdateSchema = z.object({
 
 // User location update validation
 export const userLocationUpdateSchema = z.object({
-    latitude: z.number().min(-90).max(90),
-    longitude: z.number().min(-180).max(180),
-    address: z.string().min(1).max(500)
+    defaultLocation: z.object({
+        address: z.string().min(1).max(500),
+        coordinates: z.object({
+            latitude: z.number().min(-90).max(90),
+            longitude: z.number().min(-180).max(180)
+        })
+    })
 });
 
 // User socket registration validation
@@ -61,7 +69,9 @@ export const userSocketRegistrationSchema = z.object({
     userId: z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format').optional(),
     requestId: z.string().optional(),
     name: z.string().min(1).max(100).trim(),
-    email: z.string().email().optional().or(z.literal('')),
+    email: z.string().optional().refine((val) => !val || z.email().safeParse(val).success, {
+        message: 'Invalid email format'
+    }).default(''),
     phone: z.string().regex(/^[+]?[\d\s\-\(\)]+$/, 'Invalid phone number format').min(10).max(20).trim()
 });
 
@@ -76,6 +86,9 @@ export const userPreferencesUpdateSchema = z.object({
     comfortPreference: z.number().min(1).max(5).int().optional(),
     farePreference: z.number().min(1).max(5).int().optional()
 });
+
+// Alias for backward compatibility
+export const userPreferencesSchema = userPreferencesUpdateSchema;
 
 // User status update validation
 export const userStatusUpdateSchema = z.object({
@@ -113,3 +126,54 @@ export const validateUserPreferences = (preferences) => {
 export const validateRideType = (rideType) => {
     return z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).safeParse(rideType);
 };
+
+// Bulk operations validation
+export const bulkUpdatePreferencesSchema = z.object({
+    userIds: z.array(z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format'))
+        .min(1, 'At least one user ID is required')
+        .max(100, 'Cannot update more than 100 users at once'),
+    preferences: userPreferencesUpdateSchema
+});
+
+// User analytics validation
+export const userAnalyticsQuerySchema = z.object({
+    dateFrom: z.string().date('Invalid date format').optional(),
+    dateTo: z.string().date('Invalid date format').optional(),
+    groupBy: z.enum(['day', 'week', 'month', 'rating', 'rideCount']).default('day'),
+    minRating: z.number().min(0).max(5).optional(),
+    maxRating: z.number().min(0).max(5).optional(),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10)
+});
+
+// User ride history query validation  
+export const userRideHistoryQuerySchema = z.object({
+    status: z.enum(['pending', 'bidding', 'accepted', 'completed', 'cancelled']).optional(),
+    rideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+    dateFrom: z.string().date('Invalid date format').optional(),
+    dateTo: z.string().date('Invalid date format').optional(),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10),
+    sortBy: z.enum(['createdAt', 'updatedAt', 'status', 'fareAmount']).default('createdAt'),
+    order: z.enum(['asc', 'desc']).default('desc')
+});
+
+// User recommendations query validation
+export const userRecommendationsQuerySchema = z.object({
+    rideType: z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto']).optional(),
+    maxDistance: z.number().min(0).max(100).default(10),
+    maxPrice: z.number().min(0).optional(),
+    comfortLevel: z.number().min(1).max(5).int().optional(),
+    limit: z.coerce.number().min(1).max(50).default(10)
+});
+
+// User favorites validation
+export const userFavoritesSchema = z.object({
+    favoriteDrivers: z.array(z.string().regex(/^DRIVER_[0-9A-F]{8}$/, 'Invalid driver ID format')).max(20).optional(),
+    favoriteVehicleTypes: z.array(z.enum(['Taxi', 'AC_Taxi', 'Bike', 'EBike', 'ERiksha', 'Auto'])).max(6).optional(),
+    favoriteRoutes: z.array(z.object({
+        name: z.string().min(1).max(100),
+        pickupLocation: locationSchema,
+        destination: locationSchema
+    })).max(10).optional()
+});

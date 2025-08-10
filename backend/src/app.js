@@ -4,7 +4,7 @@ import cookieParser from 'cookie-parser';
 import { Server } from 'socket.io';
 import http from 'http';
 import { config } from './config/index.js';
-import { handleDriverConnection, handleUserConnection, setSocketInstance } from './controllers/socket.controller.js';
+import { initializeSocketHandlers } from './controllers/socket.controller.js';
 
 const app = express();
 
@@ -18,24 +18,8 @@ const io = new Server(server, {
     },
 });
 
-// Set the socket instance in the controller
-setSocketInstance(io);
-
-// Socket.IO connection handling
-io.on('connection', (socket) => {
-    console.log('New client connected:', socket.id);
-    
-    // Handle driver-specific events
-    handleDriverConnection(socket);
-    
-    // Handle user-specific events
-    handleUserConnection(socket);
-    
-    // Handle general disconnection
-    socket.on('disconnect', () => {
-        console.log('Client disconnected:', socket.id);
-    });
-});
+// Initialize all socket handlers through the controller
+initializeSocketHandlers(io);
 
 app.use(cors({
     origin: config.server.clientUrl,
@@ -57,6 +41,8 @@ app.use(cookieParser());
 import rideRequestRoutes from './routes/rideRequest.routes.js';
 import driverRoutes from './routes/driver.routes.js';
 import userRoutes from './routes/user.routes.js';
+import vehicleRoutes from './routes/vehicle.routes.js';
+import socketRoutes from './routes/socket.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import authRoutes from './routes/auth.routes.js';
 
@@ -64,6 +50,8 @@ import authRoutes from './routes/auth.routes.js';
 app.use('/api/ride-requests', rideRequestRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/vehicles', vehicleRoutes);
+app.use('/api/socket', socketRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/auth', authRoutes);
 

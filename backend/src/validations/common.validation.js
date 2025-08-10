@@ -6,7 +6,7 @@ export const validateObjectId = (id) => {
 };
 
 export const validateEmail = (email) => {
-    return z.string().email().safeParse(email);
+    return z.string().email('Invalid email format').safeParse(email);
 };
 
 export const validatePhoneNumber = (phone) => {
@@ -94,4 +94,22 @@ export const requestIdParamSchema = z.object({
 
 export const bidIdParamSchema = z.object({
     bidId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid bid ID format')
+});
+
+export const vehicleIdParamSchema = z.object({
+    vehicleId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid vehicle ID format')
+});
+
+// Analytics and admin query schemas
+export const analyticsQuerySchema = z.object({
+    dateFrom: z.string().date('Invalid date format').optional(),
+    dateTo: z.string().date('Invalid date format').optional(),
+    groupBy: z.enum(['day', 'week', 'month', 'year']).default('day'),
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(10)
+});
+
+export const bulkOperationSchema = z.object({
+    ids: z.array(z.string()).min(1, 'At least one ID is required').max(100, 'Cannot process more than 100 items at once'),
+    operation: z.string().min(1, 'Operation is required')
 });

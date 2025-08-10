@@ -74,6 +74,22 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    isActive: {
+        type: Boolean,
+        default: true
+    },
+    accountStatus: {
+        type: String,
+        enum: ['active', 'inactive', 'suspended', 'banned'],
+        default: 'active'
+    },
+    statusReason: {
+        type: String,
+        maxlength: 500
+    },
+    statusEffectiveDate: {
+        type: Date
+    },
     lastSeen: {
         type: Date,
         default: Date.now

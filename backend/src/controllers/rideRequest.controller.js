@@ -1,606 +1,846 @@
 import RideRequest from '../models/rideRequest.model.js';
+import Driver from '../models/driver.model.js';
+import User from '../models/user.model.js';
+import Vehicle from '../models/vehicle.model.js';
 import asyncHandler from '../utils/asyncHandler.js';
-import { broadcastRideRequest } from './socket.controller.js';
 import { z } from 'zod';
 import { 
-    createRideRequestSchema, 
-    acceptBidSchema, 
-    getRideRequestsQuerySchema, 
-    getBidsQuerySchema, 
-    validateRequestId
+    createRideRequestSchema,
+    getRideRequestsQuerySchema,
+    getBidsQuerySchema,
+    acceptBidSchema
 } from '../validations/rideRequest.validation.js';
-import { formatValidationError } from '../validations/common.validation.js';
+import { 
+    formatValidationError,
+    requestIdParamSchema,
+    userIdParamSchema,
+    driverIdParamSchema,
+    validateObjectId,
+    validatePagination,
+    validateSortQuery
+} from '../validations/common.validation.js';
+import BaseController from './base.controller.js';
+import socketService from '../services/socketService.js';
+import mongoose from 'mongoose';
+import { APP_CONSTANTS } from '../constants.js';
+import { generateDriverId, generateUserId, validateIdFormat } from '../utils/idGenerator.js';
+import DataPersistenceService from '../services/dataPersistenceService.js';
 
-const createRideRequest = asyncHandler(async (req, res) => {
-    // Validate request body using Zod
-    const validationResult = createRideRequestSchema.safeParse(req.body);
-    
-    if (!validationResult.success) {
-        const formattedError = formatValidationError(validationResult.error);
-        return res.status(400).json({
-            success: false,
-            message: formattedError.message,
-            code: 'VALIDATION_ERROR',
-            details: formattedError.errors
-        });
-    }
+/**
+ * Enhanced Ride Request Controller with improved validation, synchronization, and error handling
+ */
+class RideRequestController extends BaseController {
 
-    const {
-        userId,
-        pickupLocation,
-        destination,
-        estimatedDistance,
-        estimatedDuration
-    } = validationResult.data;
+    /**
+     * Find matching vehicles for a ride request
+     */
+    static findMatchingVehicles = async (criteria) => {
+        const { rideType, comfortPreference, farePreference, pickupCoordinates, maxDistance = 15 } = criteria;
 
-    try {
-        // Create the ride request
-        const rideRequest = new RideRequest({
-            userId: userId.trim(),
-            pickupLocation: {
-                address: pickupLocation.address.trim(),
-                coordinates: pickupLocation.coordinates
-            },
-            destination: {
-                address: destination.address.trim(),
-                coordinates: destination.coordinates
-            },
-            estimatedDistance,
-            estimatedDuration,
-            status: 'pending'
-        });
+        try {
+            // Build vehicle query
+            const vehicleQuery = {
+                isActive: true,
+                vehicleType: rideType,
+                comfortLevel: { $gte: comfortPreference },
+                priceValue: { $lte: farePreference }
+            };
 
-        const savedRideRequest = await rideRequest.save();
+            const vehicles = await Vehicle.find(vehicleQuery)
+                .populate({
+                    path: 'driverId',
+                    select: 'driverId name phone rating totalRides status isOnline currentLocation',
+                    match: { isOnline: true, status: 'available' }
+                })
+                .lean();
 
-        // Log the ride request creation
-        console.log(`New ride request created: ${savedRideRequest._id} by user: ${userId}`);
+            // Filter by driver availability and distance
+            let matchingVehicles = vehicles.filter(vehicle => vehicle.driverId !== null);
 
-        // Update status to bidding
-        savedRideRequest.status = 'bidding';
-        await savedRideRequest.save();
+            if (pickupCoordinates) {
+                const { longitude: pickupLng, latitude: pickupLat } = pickupCoordinates;
+                
+                matchingVehicles = matchingVehicles.filter(vehicle => {
+                    if (!vehicle.driverId.currentLocation?.coordinates) return false;
+                    
+                    const { longitude: driverLng, latitude: driverLat } = vehicle.driverId.currentLocation.coordinates;
+                    const distance = RideRequestController.calculateDistance(
+                        pickupLat, pickupLng, driverLat, driverLng
+                    );
+                    
+                    vehicle.distance = distance;
+                    return distance <= maxDistance;
+                });
 
-        // Broadcast to drivers using the new function
-        broadcastRideRequest({
-            _id: savedRideRequest._id,
-            requestId: savedRideRequest._id, // Keep for backward compatibility
-            userId: savedRideRequest.userId,
-            pickupLocation: savedRideRequest.pickupLocation,
-            destination: savedRideRequest.destination,
-            estimatedDistance: savedRideRequest.estimatedDistance,
-            estimatedDuration: savedRideRequest.estimatedDuration,
-            timestamp: savedRideRequest.createdAt,
-            createdAt: savedRideRequest.createdAt,
-            status: savedRideRequest.status,
-            bids: savedRideRequest.bids || []
-        });
-
-        res.status(201).json({
-            success: true,
-            message: 'Ride request created successfully',
-            data: {
-                requestId: savedRideRequest._id,
-                userId: savedRideRequest.userId,
-                pickupLocation: savedRideRequest.pickupLocation,
-                destination: savedRideRequest.destination,
-                estimatedDistance: savedRideRequest.estimatedDistance,
-                estimatedDuration: savedRideRequest.estimatedDuration,
-                status: savedRideRequest.status,
-                createdAt: savedRideRequest.createdAt
+                // Sort by distance
+                matchingVehicles.sort((a, b) => (a.distance || 999) - (b.distance || 999));
             }
-        });
 
-    } catch (error) {
-        console.error('Error creating ride request:', error);
+            // Calculate match scores
+            return matchingVehicles.map(vehicle => {
+                let matchScore = 50; // Base score
+                
+                // Comfort bonus
+                if (vehicle.comfortLevel > comfortPreference) {
+                    matchScore += (vehicle.comfortLevel - comfortPreference) * 10;
+                }
+                
+                // Price bonus (lower price = higher score)
+                if (vehicle.priceValue < farePreference) {
+                    matchScore += (farePreference - vehicle.priceValue) * 5;
+                }
+                
+                // Driver rating bonus
+                if (vehicle.driverId.rating > 4) {
+                    matchScore += (vehicle.driverId.rating - 4) * 20;
+                }
+                
+                // Distance penalty
+                if (vehicle.distance) {
+                    matchScore -= vehicle.distance * 2;
+                }
+                
+                return {
+                    vehicleId: vehicle._id,
+                    driver: {
+                        driverId: vehicle.driverId.driverId,
+                        name: vehicle.driverId.name,
+                        rating: vehicle.driverId.rating,
+                        totalRides: vehicle.driverId.totalRides
+                    },
+                    vehicleType: vehicle.vehicleType,
+                    comfortLevel: vehicle.comfortLevel,
+                    priceValue: vehicle.priceValue,
+                    distance: vehicle.distance,
+                    matchScore: Math.max(0, Math.min(100, matchScore))
+                };
+            });
+
+        } catch (error) {
+            console.error('Error finding matching vehicles:', error);
+            return [];
+        }
+    };
+
+    /**
+     * Get ride request with detailed information
+     */
+    static getRideRequest = asyncHandler(async (req, res) => {
+        const { requestId } = req.params;
         
-        // Handle specific MongoDB errors
-        if (error.name === 'ValidationError') {
-            return res.status(400).json({
-                success: false,
-                message: 'Validation error in ride request data',
-                code: 'VALIDATION_ERROR',
-                details: error.errors
-            });
-        }
+        RideRequestController.logAction('RideRequestController', 'getRideRequest', { requestId });
 
-        if (error.code === 11000) {
-            return res.status(409).json({
-                success: false,
-                message: 'Duplicate ride request detected',
-                code: 'DUPLICATE_REQUEST'
-            });
-        }
-
-        throw error; // Let asyncHandler handle other errors
-    }
-});
-
-const getRideRequest = asyncHandler(async (req, res) => {
-    const { requestId } = req.params;
-
-    // Validate requestId using Zod
-    const validationResult = validateRequestId(requestId);
-    
-    if (!validationResult.success) {
-        return res.status(400).json({
-            success: false,
-            message: 'Invalid request ID format',
-            code: 'INVALID_REQUEST_ID'
-        });
-    }
-
-    try {
-        const rideRequest = await RideRequest.findById(requestId);
-
-        if (!rideRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'Ride request not found',
-                code: 'REQUEST_NOT_FOUND'
-            });
-        }
-
-        res.status(200).json({
-            success: true,
-            data: {
-                requestId: rideRequest._id,
-                userId: rideRequest.userId,
-                pickupLocation: rideRequest.pickupLocation,
-                destination: rideRequest.destination,
-                status: rideRequest.status,
-                estimatedDistance: rideRequest.estimatedDistance,
-                estimatedDuration: rideRequest.estimatedDuration,
-                bids: rideRequest.bids,
-                createdAt: rideRequest.createdAt,
-                updatedAt: rideRequest.updatedAt
-            }
-        });
-
-    } catch (error) {
-        console.error('Error fetching ride request:', error);
-        throw error;
-    }
-});
-
-const getUserRideRequests = asyncHandler(async (req, res) => {
-    const { userId } = req.params;
-    const { page = 1, limit = 10, status } = req.query;
-
-    // Validate userId using Zod
-    const userIdValidation = z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format').safeParse(userId);
-    
-    if (!userIdValidation.success) {
-        return res.status(400).json({
-            success: false,
-            message: 'Valid User ID is required',
-            code: 'INVALID_USER_ID'
-        });
-    }
-
-    // Validate query parameters using Zod
-    const queryValidation = getRideRequestsQuerySchema.safeParse({ page, limit, status });
-    
-    if (!queryValidation.success) {
-        const formattedError = formatValidationError(queryValidation.error);
-        return res.status(400).json({
-            success: false,
-            message: formattedError.message,
-            code: 'VALIDATION_ERROR',
-            details: formattedError.errors
-        });
-    }
-
-    const { page: pageNum, limit: limitNum, status: statusFilter } = queryValidation.data;
-
-    try {
-        // Build query
-        const query = { userId: userId.trim() };
+        // Validate requestId using Zod
+        const validationResult = validateObjectId(requestId);
         
-        // Add status filter if provided
-        if (statusFilter) {
-            query.status = statusFilter;
+        if (!validationResult.success) {
+            return RideRequestController.sendError(res, 'Invalid request ID format', 400, 'INVALID_REQUEST_ID');
         }
 
-        // Execute query with pagination
-        const skip = (pageNum - 1) * limitNum;
-        const [rideRequests, total] = await Promise.all([
-            RideRequest.find(query)
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limitNum)
-                .select('_id userId pickupLocation destination status estimatedDistance estimatedDuration bids createdAt updatedAt'),
-            RideRequest.countDocuments(query)
-        ]);
+        try {
+            const rideRequest = await RideRequest.findById(requestId)
+                .populate('userId', 'userId name phone rating')
+                .lean();
 
-        const totalPages = Math.ceil(total / limitNum);
-
-        res.status(200).json({
-            success: true,
-            data: rideRequests,
-            pagination: {
-                currentPage: pageNum,
-                totalPages,
-                totalItems: total,
-                itemsPerPage: limitNum,
-                hasNextPage: pageNum < totalPages,
-                hasPreviousPage: pageNum > 1
+            if (!rideRequest) {
+                return RideRequestController.sendError(res, 'Ride request not found', 404, 'REQUEST_NOT_FOUND');
             }
-        });
 
-    } catch (error) {
-        console.error('Error fetching user ride requests:', error);
-        throw error;
-    }
-});
+            // Populate bid driver information
+            const populatedBids = await Promise.all(
+                (rideRequest.bids || []).map(async (bid) => {
+                    const driver = await Driver.findOne({ driverId: bid.driverId })
+                        .select('driverId name phone rating totalRides currentLocation')
+                        .lean();
+                    
+                    return {
+                        ...bid,
+                        driver: driver || null
+                    };
+                })
+            );
 
-const getRideRequestBids = asyncHandler(async (req, res) => {
-    const { requestId } = req.params;
-    const { sortBy = 'fare', order = 'asc' } = req.query;
+            const sanitizedRequest = RideRequestController.sanitizeForResponse(rideRequest, ['__v']);
 
-    // Validate requestId using Zod
-    const requestIdValidation = validateRequestId(requestId);
-    
-    if (!requestIdValidation.success) {
-        return res.status(400).json({
-            success: false,
-            message: 'Invalid request ID format',
-            code: 'INVALID_REQUEST_ID'
-        });
-    }
+            return RideRequestController.sendSuccess(res, {
+                requestId: sanitizedRequest._id,
+                userId: sanitizedRequest.userId?.userId || sanitizedRequest.userId,
+                user: sanitizedRequest.userId ? {
+                    userId: sanitizedRequest.userId.userId,
+                    name: sanitizedRequest.userId.name,
+                    phone: sanitizedRequest.userId.phone,
+                    rating: sanitizedRequest.userId.rating
+                } : null,
+                rideType: sanitizedRequest.rideType,
+                comfortPreference: sanitizedRequest.comfortPreference,
+                farePreference: sanitizedRequest.farePreference,
+                pickupLocation: sanitizedRequest.pickupLocation,
+                destination: sanitizedRequest.destination,
+                estimatedDistance: sanitizedRequest.estimatedDistance,
+                estimatedDuration: sanitizedRequest.estimatedDuration,
+                status: sanitizedRequest.status,
+                bids: populatedBids,
+                acceptedBid: sanitizedRequest.acceptedBid,
+                createdAt: sanitizedRequest.createdAt,
+                updatedAt: sanitizedRequest.updatedAt
+            }, 'Ride request retrieved successfully');
 
-    // Validate query parameters using Zod
-    const queryValidation = getBidsQuerySchema.safeParse({ sortBy, order });
-    
-    if (!queryValidation.success) {
-        const formattedError = formatValidationError(queryValidation.error);
-        return res.status(400).json({
-            success: false,
-            message: formattedError.message,
-            code: 'VALIDATION_ERROR',
-            details: formattedError.errors
-        });
-    }
+        } catch (error) {
+            const mongoError = RideRequestController.handleMongoError(error);
+            return RideRequestController.sendError(res, mongoError.message, mongoError.statusCode, mongoError.code, mongoError.details);
+        }
+    });
 
-    const { sortBy: sortField, order: sortOrder } = queryValidation.data;
+    /**
+     * Get all ride requests for a user
+     */
+    static getUserRideRequests = asyncHandler(async (req, res) => {
+        const { userId } = req.params;
+        const { page = 1, limit = 10, status, sortBy = 'createdAt', order = 'desc' } = req.query;
 
-    try {
-        const rideRequest = await RideRequest.findById(requestId);
+        RideRequestController.logAction('RideRequestController', 'getUserRideRequests', { userId, page, limit });
 
-        if (!rideRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'Ride request not found',
-                code: 'REQUEST_NOT_FOUND'
-            });
+        // Validate userId using Zod
+        const userIdValidation = z.string().regex(/^USER_[0-9A-F]{8}$/, 'Invalid user ID format').safeParse(userId);
+        
+        if (!userIdValidation.success) {
+            return RideRequestController.sendError(res, 'Invalid user ID format', 400, 'INVALID_USER_ID');
         }
 
-        // Enhanced sorting logic using model method
-        const sortedBids = rideRequest.getSortedBids(sortField, sortOrder);
+        // Validate query parameters using Zod
+        const queryValidation = getRideRequestsQuerySchema.safeParse({ page, limit, status, sortBy, order });
+        
+        if (!queryValidation.success) {
+            return RideRequestController.sendValidationError(res, queryValidation);
+        }
 
-        // Add ranking and metadata to bids
-        const rankedBids = sortedBids.map((bid, index) => ({
-            ...bid.toObject(),
-            rank: index + 1,
-            isLowest: index === 0 && sortField === 'fare' && sortOrder === 'asc',
-            isHighest: index === sortedBids.length - 1 && sortField === 'fare' && sortOrder === 'asc'
-        }));
+        const { page: pageNum, limit: limitNum, status: statusFilter, sortBy: sortField, order: sortOrder } = queryValidation.data;
 
-        // Calculate bid statistics
-        const fares = sortedBids.map(bid => bid.fareAmount);
-        const lowestFare = fares.length > 0 ? Math.min(...fares) : null;
-        const highestFare = fares.length > 0 ? Math.max(...fares) : null;
-        const averageFare = fares.length > 0 ? fares.reduce((sum, fare) => sum + fare, 0) / fares.length : null;
+        try {
+            // Build query
+            const query = { userId };
+            if (statusFilter) {
+                query.status = statusFilter;
+            }
 
-        res.status(200).json({
-            success: true,
-            data: {
-                requestId: rideRequest._id,
+            // Build sort
+            const sort = { [sortField]: sortOrder === 'asc' ? 1 : -1 };
+
+            // Execute query with pagination
+            const skip = (pageNum - 1) * limitNum;
+            
+            const [rideRequests, totalCount] = await Promise.all([
+                RideRequest.find(query)
+                    .sort(sort)
+                    .skip(skip)
+                    .limit(limitNum)
+                    .lean(),
+                RideRequest.countDocuments(query)
+            ]);
+
+            const sanitizedRequests = RideRequestController.sanitizeForResponse(rideRequests, ['__v']);
+
+            const paginationMeta = RideRequestController.getPaginationMeta(pageNum, limitNum, totalCount);
+
+            return RideRequestController.sendSuccess(res, {
+                requests: sanitizedRequests.map(request => ({
+                    requestId: request._id,
+                    rideType: request.rideType,
+                    comfortPreference: request.comfortPreference,
+                    farePreference: request.farePreference,
+                    pickupLocation: request.pickupLocation,
+                    destination: request.destination,
+                    estimatedDistance: request.estimatedDistance,
+                    estimatedDuration: request.estimatedDuration,
+                    status: request.status,
+                    bidsCount: request.bids?.length || 0,
+                    acceptedBid: request.acceptedBid,
+                    createdAt: request.createdAt,
+                    updatedAt: request.updatedAt
+                })),
+                filters: { status: statusFilter, sortBy: sortField, order: sortOrder }
+            }, 'User ride requests retrieved successfully', 200, paginationMeta);
+
+        } catch (error) {
+            const mongoError = RideRequestController.handleMongoError(error);
+            return RideRequestController.sendError(res, mongoError.message, mongoError.statusCode, mongoError.code, mongoError.details);
+        }
+    });
+
+    /**
+     * Get all bids for a specific ride request
+     */
+    static getRideRequestBids = asyncHandler(async (req, res) => {
+        const { requestId } = req.params;
+        const { sortBy = 'fareAmount', order = 'asc', status } = req.query;
+
+        RideRequestController.logAction('RideRequestController', 'getRideRequestBids', { requestId, sortBy, order });
+
+        // Validate requestId using Zod
+        const requestIdValidation = validateObjectId(requestId);
+        
+        if (!requestIdValidation.success) {
+            return RideRequestController.sendError(res, 'Invalid request ID format', 400, 'INVALID_REQUEST_ID');
+        }
+
+        // Validate query parameters using Zod
+        const queryValidation = getBidsQuerySchema.safeParse({ sortBy, order });
+        
+        if (!queryValidation.success) {
+            return RideRequestController.sendValidationError(res, queryValidation);
+        }
+
+        const { sortBy: sortField, order: sortOrder } = queryValidation.data;
+
+        try {
+            const rideRequest = await RideRequest.findById(requestId).lean();
+
+            if (!rideRequest) {
+                return RideRequestController.sendError(res, 'Ride request not found', 404, 'REQUEST_NOT_FOUND');
+            }
+
+            let bids = rideRequest.bids || [];
+
+            // Filter by status if provided
+            if (status) {
+                bids = bids.filter(bid => bid.status === status);
+            }
+
+            // Populate driver information for each bid
+            const populatedBids = await Promise.all(
+                bids.map(async (bid) => {
+                    const driver = await Driver.findOne({ driverId: bid.driverId })
+                        .populate('vehicles', 'make model year vehicleType comfortLevel priceValue')
+                        .select('driverId name phone rating totalRides currentLocation vehicles')
+                        .lean();
+                    
+                    return {
+                        ...bid,
+                        driver: driver ? {
+                            driverId: driver.driverId,
+                            name: driver.name,
+                            phone: driver.phone,
+                            rating: driver.rating,
+                            totalRides: driver.totalRides,
+                            currentLocation: driver.currentLocation,
+                            vehicles: driver.vehicles || []
+                        } : null
+                    };
+                })
+            );
+
+            // Sort bids
+            populatedBids.sort((a, b) => {
+                const aValue = a[sortField];
+                const bValue = b[sortField];
+                
+                if (sortOrder === 'asc') {
+                    return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+                } else {
+                    return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+                }
+            });
+
+            return RideRequestController.sendSuccess(res, {
+                requestId,
                 status: rideRequest.status,
-                bids: rankedBids,
-                totalBids: rankedBids.length,
-                sortBy,
-                order,
-                statistics: {
-                    lowestFare,
-                    highestFare,
-                    averageFare: averageFare ? parseFloat(averageFare.toFixed(2)) : null,
-                    priceRange: (lowestFare && highestFare) ? highestFare - lowestFare : null
+                bids: populatedBids,
+                bidCount: populatedBids.length,
+                sorting: { sortBy: sortField, order: sortOrder },
+                filters: { status }
+            }, 'Ride request bids retrieved successfully');
+
+        } catch (error) {
+            const mongoError = RideRequestController.handleMongoError(error);
+            return RideRequestController.sendError(res, mongoError.message, mongoError.statusCode, mongoError.code, mongoError.details);
+        }
+    });
+
+    /**
+     * Get available ride requests for drivers
+     */
+    static getAvailableRideRequests = asyncHandler(async (req, res) => {
+        const { page = 1, limit = 10, rideType, maxDistance = 10 } = req.query;
+        const { driverId } = req.query; // Optional: filter requests suitable for specific driver
+
+        RideRequestController.logAction('RideRequestController', 'getAvailableRideRequests', { page, limit, rideType });
+
+        // Validate query parameters using Zod
+        const queryValidation = getRideRequestsQuerySchema.safeParse({ page, limit, status: 'bidding' });
+        
+        if (!queryValidation.success) {
+            return RideRequestController.sendValidationError(res, queryValidation);
+        }
+
+        const { page: pageNum, limit: limitNum } = queryValidation.data;
+
+        try {
+            // Build query for bidding requests
+            const query = { status: 'bidding' };
+            if (rideType) {
+                query.rideType = rideType;
+            }
+
+            // Execute query with pagination
+            const skip = (pageNum - 1) * limitNum;
+            
+            let [rideRequests, totalCount] = await Promise.all([
+                RideRequest.find(query)
+                    .populate('userId', 'userId name rating')
+                    .sort({ createdAt: -1 })
+                    .skip(skip)
+                    .limit(limitNum)
+                    .lean(),
+                RideRequest.countDocuments(query)
+            ]);
+
+            // If driverId is provided, filter by distance and suitability
+            if (driverId) {
+                const driver = await Driver.findOne({ driverId })
+                    .populate('vehicles')
+                    .lean();
+
+                if (driver && driver.currentLocation?.coordinates) {
+                    const { longitude: driverLng, latitude: driverLat } = driver.currentLocation.coordinates;
+                    
+                    rideRequests = rideRequests.filter(request => {
+                        if (!request.pickupLocation?.coordinates) return true;
+                        
+                        const { longitude: pickupLng, latitude: pickupLat } = request.pickupLocation.coordinates;
+                        const distance = RideRequestController.calculateDistance(
+                            driverLat, driverLng, pickupLat, pickupLng
+                        );
+                        
+                        return distance <= parseFloat(maxDistance);
+                    });
+
+                    // Add distance information and match scores
+                    rideRequests = rideRequests.map(request => {
+                        let distance = null;
+                        let matchScore = 0;
+                        
+                        if (request.pickupLocation?.coordinates) {
+                            const { longitude: pickupLng, latitude: pickupLat } = request.pickupLocation.coordinates;
+                            distance = RideRequestController.calculateDistance(
+                                driverLat, driverLng, pickupLat, pickupLng
+                            );
+                        }
+
+                        // Calculate match score based on vehicle suitability
+                        if (driver.vehicles && driver.vehicles.length > 0) {
+                            const suitableVehicles = driver.vehicles.filter(vehicle => 
+                                vehicle.vehicleType === request.rideType &&
+                                vehicle.comfortLevel >= request.comfortPreference &&
+                                vehicle.priceValue <= request.farePreference &&
+                                vehicle.isActive
+                            );
+                            
+                            if (suitableVehicles.length > 0) {
+                                matchScore = 100 - (distance || 0) * 2; // Base score minus distance penalty
+                                matchScore = Math.max(0, Math.min(100, matchScore));
+                            }
+                        }
+
+                        return { ...request, distance, matchScore };
+                    });
+
+                    // Sort by match score and distance
+                    rideRequests.sort((a, b) => {
+                        if (b.matchScore !== a.matchScore) {
+                            return b.matchScore - a.matchScore;
+                        }
+                        return (a.distance || 999) - (b.distance || 999);
+                    });
                 }
             }
+
+            const sanitizedRequests = RideRequestController.sanitizeForResponse(rideRequests, ['__v']);
+
+            const paginationMeta = RideRequestController.getPaginationMeta(pageNum, limitNum, totalCount);
+
+            return RideRequestController.sendSuccess(res, {
+                requests: sanitizedRequests.map(request => ({
+                    requestId: request._id,
+                    user: request.userId ? {
+                        userId: request.userId.userId,
+                        name: request.userId.name,
+                        rating: request.userId.rating
+                    } : null,
+                    rideType: request.rideType,
+                    comfortPreference: request.comfortPreference,
+                    farePreference: request.farePreference,
+                    pickupLocation: request.pickupLocation,
+                    destination: request.destination,
+                    estimatedDistance: request.estimatedDistance,
+                    estimatedDuration: request.estimatedDuration,
+                    bidsCount: request.bids?.length || 0,
+                    createdAt: request.createdAt,
+                    ...(request.distance !== undefined && { distance: request.distance }),
+                    ...(request.matchScore !== undefined && { matchScore: request.matchScore })
+                })),
+                filters: { rideType, maxDistance, driverId }
+            }, 'Available ride requests retrieved successfully', 200, paginationMeta);
+
+        } catch (error) {
+            const mongoError = RideRequestController.handleMongoError(error);
+            return RideRequestController.sendError(res, mongoError.message, mongoError.statusCode, mongoError.code, mongoError.details);
+        }
+    });
+
+    /**
+     * Get ride request analytics
+     */
+    static getRideRequestAnalytics = asyncHandler(async (req, res) => {
+        RideRequestController.logAction('RideRequestController', 'getRideRequestAnalytics', req.query);
+
+        const analyticsSchema = z.object({
+            period: z.enum(['day', 'week', 'month']).default('week'),
+            status: z.enum([...Object.values(APP_CONSTANTS.RIDE_STATUS), 'all']).default('all')
         });
 
-    } catch (error) {
-        console.error('Error fetching ride request bids:', error);
-        throw error;
-    }
-});
-
-const acceptBid = asyncHandler(async (req, res) => {
-    const { requestId, bidId } = req.params;
-    const { userId } = req.body;
-
-    // Validate request data using Zod
-    const validationResult = acceptBidSchema.safeParse({ requestId, bidId, userId });
-    
-    if (!validationResult.success) {
-        const formattedError = formatValidationError(validationResult.error);
-        return res.status(400).json({
-            success: false,
-            message: formattedError.message,
-            code: 'VALIDATION_ERROR',
-            details: formattedError.errors
-        });
-    }
-
-    const { requestId: validRequestId, bidId: validBidId, userId: validUserId } = validationResult.data;
-
-    try {
-        const rideRequest = await RideRequest.findById(validRequestId);
-
-        if (!rideRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'Ride request not found',
-                code: 'REQUEST_NOT_FOUND'
-            });
+        const validationResult = analyticsSchema.safeParse(req.query);
+        if (!validationResult.success) {
+            return RideRequestController.sendValidationError(res, validationResult);
         }
 
-        // Check if user owns this ride request
-        if (rideRequest.userId !== validUserId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Unauthorized to accept bids for this ride request',
-                code: 'UNAUTHORIZED'
-            });
+        const { period, status } = validationResult.data;
+
+        try {
+            const cacheKey = `ride_analytics_${period}_${status}`;
+            
+            const analytics = await RideRequestController.getCachedData(cacheKey, async () => {
+                const periodMap = {
+                    day: 1,
+                    week: 7,
+                    month: 30
+                };
+
+                const days = periodMap[period];
+                const endDate = new Date();
+                const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+
+                const matchQuery = {
+                    createdAt: { $gte: startDate, $lte: endDate },
+                    ...(status !== 'all' && { status })
+                };
+
+                const [
+                    totalRequests,
+                    statusBreakdown,
+                    avgCompletionTime,
+                    popularRoutes,
+                    revenueData
+                ] = await Promise.all([
+                    RideRequest.countDocuments(matchQuery),
+                    RideRequest.aggregate([
+                        { $match: matchQuery },
+                        { $group: { _id: '$status', count: { $sum: 1 } } },
+                        { $sort: { count: -1 } }
+                    ]),
+                    RideRequest.aggregate([
+                        { 
+                            $match: { 
+                                ...matchQuery, 
+                                status: APP_CONSTANTS.RIDE_STATUS.COMPLETED,
+                                acceptedAt: { $exists: true },
+                                completedAt: { $exists: true }
+                            }
+                        },
+                        {
+                            $group: {
+                                _id: null,
+                                avgTime: {
+                                    $avg: {
+                                        $subtract: ['$completedAt', '$acceptedAt']
+                                    }
+                                }
+                            }
+                        }
+                    ]),
+                    RideRequest.aggregate([
+                        { $match: matchQuery },
+                        {
+                            $group: {
+                                _id: {
+                                    pickup: '$pickupLocation.address',
+                                    destination: '$destination.address'
+                                },
+                                count: { $sum: 1 },
+                                avgFare: { $avg: '$acceptedBid.fareAmount' }
+                            }
+                        },
+                        { $sort: { count: -1 } },
+                        { $limit: 10 }
+                    ]),
+                    RideRequest.aggregate([
+                        { 
+                            $match: { 
+                                ...matchQuery, 
+                                status: APP_CONSTANTS.RIDE_STATUS.COMPLETED 
+                            }
+                        },
+                        {
+                            $group: {
+                                _id: null,
+                                totalRevenue: { $sum: '$acceptedBid.fareAmount' },
+                                avgFare: { $avg: '$acceptedBid.fareAmount' },
+                                count: { $sum: 1 }
+                            }
+                        }
+                    ])
+                ]);
+
+                return {
+                    period,
+                    totalRequests,
+                    statusBreakdown: statusBreakdown.reduce((acc, item) => {
+                        acc[item._id] = item.count;
+                        return acc;
+                    }, {}),
+                    avgCompletionTimeMinutes: avgCompletionTime[0]?.avgTime 
+                        ? Math.round(avgCompletionTime[0].avgTime / (1000 * 60)) 
+                        : 0,
+                    popularRoutes: popularRoutes.map(route => ({
+                        from: route._id.pickup,
+                        to: route._id.destination,
+                        requestCount: route.count,
+                        avgFare: route.avgFare ? parseFloat(route.avgFare.toFixed(2)) : 0
+                    })),
+                    revenue: revenueData[0] || { totalRevenue: 0, avgFare: 0, count: 0 }
+                };
+            }, 300000); // Cache for 5 minutes
+
+            return RideRequestController.sendSuccess(res, analytics, 'Ride request analytics retrieved successfully');
+
+        } catch (error) {
+            const mongoError = RideRequestController.handleMongoError(error);
+            return RideRequestController.sendError(res, mongoError.message, mongoError.statusCode, mongoError.code, mongoError.details);
         }
+    });
 
-        // Check if ride request is in bidding status
-        if (rideRequest.status !== 'bidding') {
-            return res.status(400).json({
-                success: false,
-                message: 'Ride request is not accepting bids',
-                code: 'BIDDING_CLOSED'
-            });
-        }
+    /**
+     * Bulk cancel ride requests
+     */
+    static bulkCancelRequests = asyncHandler(async (req, res) => {
+        const { requestIds } = req.body;
 
-        // Find the specific bid
-        const acceptedBid = rideRequest.bids.find(bid => bid._id.toString() === validBidId);
-
-        if (!acceptedBid) {
-            return res.status(404).json({
-                success: false,
-                message: 'Bid not found',
-                code: 'BID_NOT_FOUND'
-            });
-        }
-
-        // Update ride request status
-        rideRequest.status = 'accepted';
-        rideRequest.acceptedBid = acceptedBid;
-        await rideRequest.save();
-
-        // Broadcast bid acceptance to all drivers
-        const { broadcastBidAccepted } = await import('./socket.controller.js');
-        broadcastBidAccepted({
-            requestId: rideRequest._id,
-            acceptedBid: acceptedBid,
-            driverId: acceptedBid.driverId
-        });
-
-        res.status(200).json({
-            success: true,
-            message: 'Bid accepted successfully',
-            data: {
-                requestId: rideRequest._id,
-                acceptedBid: acceptedBid,
-                status: rideRequest.status
+        try {
+            // Validate input
+            if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
+                return RideRequestController.sendError(res, 'Invalid request IDs', 400, 'INVALID_REQUEST_IDS');
             }
-        });
 
-    } catch (error) {
-        console.error('Error accepting bid:', error);
-        throw error;
-    }
-});
+            // Update all matching requests
+            const result = await RideRequest.updateMany(
+                { requestId: { $in: requestIds }, status: { $in: ['pending', 'bidding'] } },
+                { $set: { status: 'cancelled', cancellationTime: new Date() } }
+            );
 
-const getRideRequestBidsLive = asyncHandler(async (req, res) => {
-    const { requestId } = req.params;
-    const { lastFetch } = req.query;
-
-    // Validate requestId format
-    if (!requestId || !requestId.match(/^[0-9a-fA-F]{24}$/)) {
-        return res.status(400).json({
-            success: false,
-            message: 'Invalid request ID format',
-            code: 'INVALID_REQUEST_ID'
-        });
-    }
-
-    try {
-        const rideRequest = await RideRequest.findById(requestId);
-
-        if (!rideRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'Ride request not found',
-                code: 'REQUEST_NOT_FOUND'
-            });
-        }
-
-        // Filter bids based on lastFetch timestamp if provided
-        let bids = rideRequest.bids;
-        if (lastFetch) {
-            const lastFetchTime = new Date(lastFetch);
-            bids = bids.filter(bid => new Date(bid.bidTime) > lastFetchTime);
-        }
-
-        // Sort bids by fare amount (lowest first) using model method
-        const sortedBids = rideRequest.getSortedBids('fare', 'asc');
-
-        res.status(200).json({
-            success: true,
-            data: {
-                requestId: rideRequest._id,
-                status: rideRequest.status,
-                bids: sortedBids,
-                totalBids: rideRequest.bids.length,
-                newBids: sortedBids.length,
-                lowestFare: rideRequest.bids.length > 0 ? 
-                    Math.min(...rideRequest.bids.map(b => b.fareAmount)) : null,
-                timestamp: new Date()
+            // Check if any requests were updated
+            if (result.modifiedCount === 0) {
+                return RideRequestController.sendError(res, 'No cancellable requests found', 404, 'NO_CANCELLABLE_REQUESTS');
             }
-        });
 
-    } catch (error) {
-        console.error('Error fetching live ride request bids:', error);
-        throw error;
-    }
+            // Notify users via WebSocket
+            requestIds.forEach(requestId => {
+                socketService.emitToRoom(`request_${requestId}`, 'request:cancelled', {
+                    requestId,
+                    message: 'Ride request cancelled in bulk operation'
+                });
+            });
+
+            // Return success response
+            RideRequestController.sendResponse(res, {
+                message: `Cancelled ${result.modifiedCount} ride requests`,
+                cancelledCount: result.modifiedCount
+            });
+        } catch (error) {
+            console.error('Bulk cancel error:', error);
+            RideRequestController.sendError(res, 'Failed to bulk cancel requests', 500, 'BULK_CANCEL_FAILED');
+        }
+    });
+
+    /**
+     * Optimize ride matching algorithm
+     */
+    static optimizeMatching = asyncHandler(async (req, res) => {
+        RideRequestController.logAction('RideRequestController', 'optimizeMatching');
+
+        try {
+            const result = await RideRequestController.withRetry(async () => {
+                // Get all pending ride requests
+                const pendingRequests = await DataPersistenceService.recoverActiveRideRequests();
+                
+                let optimizedCount = 0;
+                
+                for (const request of pendingRequests) {
+                    if (request.status === APP_CONSTANTS.RIDE_STATUS.PENDING) {
+                        // Re-run matching algorithm
+                        const matchingVehicles = await RideRequestController.findMatchingVehicles(
+                            request.pickupLocation,
+                            request.rideType,
+                            request.userId
+                        );
+
+                        if (matchingVehicles.length > 0) {
+                            // Update to bidding status if matches found
+                            await RideRequest.findByIdAndUpdate(request._id, {
+                                status: APP_CONSTANTS.RIDE_STATUS.BIDDING,
+                                updatedAt: new Date()
+                            });
+
+                            // Notify matching drivers
+                            try {
+                                matchingVehicles.slice(0, 5).forEach(vehicle => {
+                                    socketService.emitToDriver(vehicle.driver.driverId, 'rideRequest:new', {
+                                        requestId: request._id,
+                                        ...request.toObject(),
+                                        matchScore: vehicle.matchScore
+                                    });
+                                });
+                            } catch (socketError) {
+                                console.warn('Socket broadcast failed:', socketError.message);
+                            }
+
+                            optimizedCount++;
+                        }
+                    }
+                }
+
+                return { optimizedCount, totalPending: pendingRequests.length };
+            });
+
+            return RideRequestController.sendSuccess(res, result, 'Ride matching optimization completed');
+
+        } catch (error) {
+            const mongoError = RideRequestController.handleMongoError(error);
+            return RideRequestController.sendError(res, mongoError.message, mongoError.statusCode, mongoError.code, mongoError.details);
+        }
+    });
+}
+
+/**
+ * Find matching vehicles for ride requests (standalone wrapper)
+ */
+const findMatchingVehicles = async (criteria) => {
+    return await RideRequestController.findMatchingVehicles(criteria);
+};
+
+/**
+ * Get ride request by ID (standalone wrapper)
+ */
+const getRideRequest = asyncHandler(async (req, res) => {
+    return await RideRequestController.getRideRequest(req, res);
 });
 
+/**
+ * Get user ride requests (standalone wrapper)
+ */
+const getUserRideRequests = asyncHandler(async (req, res) => {
+    return await RideRequestController.getUserRideRequests(req, res);
+});
+
+/**
+ * Get ride request bids (standalone wrapper)
+ */
+const getRideRequestBids = asyncHandler(async (req, res) => {
+    return await RideRequestController.getRideRequestBids(req, res);
+});
+
+/**
+ * Get available ride requests (standalone wrapper)
+ */
 const getAvailableRideRequests = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, status = 'pending' } = req.query;
-
-    // Validate query parameters using Zod
-    const queryValidation = getRideRequestsQuerySchema.safeParse({ page, limit, status });
-    
-    if (!queryValidation.success) {
-        const formattedError = formatValidationError(queryValidation.error);
-        return res.status(400).json({
-            success: false,
-            message: formattedError.message,
-            code: 'VALIDATION_ERROR',
-            details: formattedError.errors
-        });
-    }
-
-    const { page: pageNum, limit: limitNum, status: statusFilter } = queryValidation.data;
-
-    try {
-        // Build query to get available ride requests (pending and bidding status)
-        const query = { 
-            status: { $in: ['pending', 'bidding'] } // Available for bidding
-        };
-
-        // Execute query with pagination
-        const skip = (pageNum - 1) * limitNum;
-        const [rideRequests, total] = await Promise.all([
-            RideRequest.find(query)
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limitNum)
-                .select('_id userId pickupLocation destination status estimatedDistance estimatedDuration bids createdAt updatedAt'),
-            RideRequest.countDocuments(query)
-        ]);
-
-        const totalPages = Math.ceil(total / limitNum);
-
-        res.status(200).json({
-            success: true,
-            data: rideRequests,
-            pagination: {
-                currentPage: pageNum,
-                totalPages,
-                totalItems: total,
-                itemsPerPage: limitNum,
-                hasNextPage: pageNum < totalPages,
-                hasPreviousPage: pageNum > 1
-            }
-        });
-
-    } catch (error) {
-        console.error('Error fetching available ride requests:', error);
-        throw error;
-    }
+    return await RideRequestController.getAvailableRideRequests(req, res);
 });
 
-// Place a bid on a ride request
-const placeBid = asyncHandler(async (req, res) => {
-    const { requestId } = req.params;
-    const { driverId, fareAmount, estimatedArrival, message } = req.body;
+/**
+ * Get ride request analytics (standalone wrapper)
+ */
+const getRideRequestAnalytics = asyncHandler(async (req, res) => {
+    return await RideRequestController.getRideRequestAnalytics(req, res);
+});
+
+/**
+ * Optimize ride matching (standalone wrapper)
+ */
+const optimizeMatching = asyncHandler(async (req, res) => {
+    return await RideRequestController.optimizeMatching(req, res);
+});
+
+/**
+ * Bulk cancel ride requests
+ * @route POST /api/ride-requests/bulk-cancel
+ */
+const bulkCancelRequests = asyncHandler(async (req, res) => {
+    RideRequestController.logAction('RideRequestController', 'bulkCancelRequests');
 
     try {
-        // Validate requestId format
-        const requestIdValidation = validateRequestId(requestId);
-        if (!requestIdValidation.success) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid request ID format',
-                code: 'INVALID_REQUEST_ID'
-            });
+        const { requestIds, reason = 'Cancelled by user' } = req.body;
+
+        // Validate input
+        if (!Array.isArray(requestIds) || requestIds.length === 0) {
+            return RideRequestController.sendError(res, 'requestIds must be a non-empty array', 400, 'INVALID_REQUEST_IDS');
         }
 
-        // Find the ride request
-        const rideRequest = await RideRequest.findById(requestId);
-        if (!rideRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'Ride request not found',
-                code: 'REQUEST_NOT_FOUND'
-            });
+        // Validate each request ID
+        const invalidIds = requestIds.filter(id => !mongoose.Types.ObjectId.isValid(id));
+        if (invalidIds.length > 0) {
+            return RideRequestController.sendError(res, `Invalid request IDs: ${invalidIds.join(', ')}`, 400, 'INVALID_OBJECT_IDS');
         }
 
-        // Check if bidding is open
-        if (rideRequest.status !== 'bidding') {
-            return res.status(400).json({
-                success: false,
-                message: 'Bidding is not open for this request',
-                code: 'BIDDING_CLOSED'
-            });
+        // Update multiple ride requests to cancelled status
+        const result = await RideRequest.updateMany(
+            { 
+                _id: { $in: requestIds },
+                status: { $in: ['pending', 'bidding'] }
+            },
+            { 
+                $set: { 
+                    status: 'cancelled',
+                    cancellationTime: new Date(),
+                    cancellationReason: reason
+                } 
+            }
+        );
+
+        // Check if any requests were updated
+        if (result.modifiedCount === 0) {
+            return RideRequestController.sendError(res, 'No cancellable requests found', 404, 'NO_CANCELLABLE_REQUESTS');
         }
 
-        // Check if driver already placed a bid
-        const existingBid = rideRequest.bids.find(bid => bid.driverId === driverId);
-        if (existingBid) {
-            return res.status(409).json({
-                success: false,
-                message: 'Driver already placed a bid for this request',
-                code: 'BID_ALREADY_EXISTS'
-            });
-        }
-
-        // Validate bid amount
-        if (!fareAmount || fareAmount <= 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid bid amount',
-                code: 'INVALID_BID_AMOUNT'
-            });
-        }
-
-        // Add the bid using the model's addBid method
-        await rideRequest.addBid(driverId, fareAmount);
-
-        // Get the newly added bid
-        const addedBid = rideRequest.bids[rideRequest.bids.length - 1];
-
-        res.status(201).json({
-            success: true,
-            message: 'Bid placed successfully',
-            data: {
-                bidId: addedBid._id,
+        // Notify users via WebSocket
+        requestIds.forEach(requestId => {
+            socketService.emitToRoom(`request_${requestId}`, 'request:cancelled', {
                 requestId,
-                driverId: addedBid.driverId,
-                fareAmount: addedBid.fareAmount,
-                bidTime: addedBid.bidTime
-            }
+                message: reason,
+                cancelledAt: new Date()
+            });
+        });
+
+        // Return success response
+        RideRequestController.sendResponse(res, {
+            message: `Successfully cancelled ${result.modifiedCount} ride requests`,
+            cancelledCount: result.modifiedCount,
+            totalRequested: requestIds.length
         });
 
     } catch (error) {
-        console.error('Error placing bid:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to place bid',
-            code: 'BID_PLACEMENT_FAILED'
-        });
+        console.error('Bulk cancel error:', error);
+        RideRequestController.sendError(res, 'Failed to bulk cancel ride requests', 500, 'BULK_CANCEL_FAILED');
     }
 });
 
+// Export individual functions
 export {
-    createRideRequest,
+    findMatchingVehicles,
     getRideRequest,
     getUserRideRequests,
     getRideRequestBids,
-    getRideRequestBidsLive,
-    acceptBid,
     getAvailableRideRequests,
-    placeBid
+    getRideRequestAnalytics,
+    bulkCancelRequests,
+    optimizeMatching
 };
+
+export default RideRequestController;
