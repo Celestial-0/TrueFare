@@ -3,6 +3,8 @@
  * This file provides a centralized way to access environment variables
  */
 
+import { Platform } from 'react-native';
+
 // Type definitions for environment variables
 export interface EnvConfig {
   API_BASE_URL: string;
@@ -14,19 +16,35 @@ export interface EnvConfig {
   DEFAULT_TIMEOUT: number;
 }
 
+// Function to get the correct host URL for development
+const getHostUrl = (): string => {
+  // Prefer the environment variable if it's set for production or specific overrides.
+  const envUrl = process.env.EXPO_PUBLIC_MAIN_URL;
+  if (envUrl) {
+    return envUrl;
+  }
+
+  // For Android emulators, use the environment variable 'ANDROID_LOCALHOST'
+  // For iOS simulators, use the environment variable 'IOS_LOCALHOST'
+  if (Platform.OS === 'android') {
+    return process.env.ANDROID_LOCALHOST || '10.0.2.2';
+  }
+  return process.env.IOS_LOCALHOST || 'localhost';
+};
+
 // Default fallback values
 const defaultConfig: EnvConfig = {
-  API_BASE_URL: 'http://192.168.137.55:8000/api',
-  SOCKET_URL: 'http://192.168.137.55:8000',
-  MAIN_URL: '192.168.137.55',
+  API_BASE_URL: 'http://localhost:8000/api',
+  SOCKET_URL: 'http://localhost:8000',
+  MAIN_URL: 'localhost',
   APP_NAME: 'TrueFare',
-  APP_VERSION: '1.0.0',
+  APP_VERSION: '0.2.1',
   DEBUG_MODE: true,
   DEFAULT_TIMEOUT: 10000,
 };
 
-// Get MAIN_URL from environment or use default
-const mainUrl = process.env.EXPO_PUBLIC_MAIN_URL || process.env.MAIN_URL || defaultConfig.MAIN_URL;
+// Get the appropriate host URL
+const mainUrl = getHostUrl();
 
 // Environment configuration object with dynamic URL construction
 export const config: EnvConfig = {

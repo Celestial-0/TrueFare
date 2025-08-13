@@ -13,7 +13,7 @@ export const config = {
     server: {
         port: process.env.PORT || 8000,
         nodeEnv: process.env.NODE_ENV || 'development',
-        mainUrl: process.env.EXPO_PUBLIC_MAIN_URL || process.env.MAIN_URL || 'http://localhost:8000',
+        mainUrl: process.env.EXPO_PUBLIC_MAIN_URL || 'http://localhost:8000',
         clientUrl: process.env.CLIENT_URL || 'http://localhost:8000'
     },
     app: {

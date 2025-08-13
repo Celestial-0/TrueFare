@@ -890,10 +890,17 @@ class SocketController extends BaseController {
                     return;
                 }
                 
+                // Determine isOnline based on status
+                const isOnline = status !== 'offline';
+                
                 // Update driver status in the database
                 const driver = await Driver.findOneAndUpdate(
                     { driverId },
-                    { status, lastSeen: new Date() },
+                    { 
+                        status, 
+                        isOnline,
+                        lastSeen: new Date() 
+                    },
                     { new: true }
                 );
                 
@@ -912,12 +919,14 @@ class SocketController extends BaseController {
                 socketService.getIO().emit('driver:statusUpdated', {
                     driverId,
                     status,
+                    isOnline,
                     timestamp: new Date()
                 });
                 
                 socket.emit('driver:statusUpdated', {
                     success: true,
-                    message: 'Driver status updated successfully'
+                    message: 'Driver status updated successfully',
+                    isOnline
                 });
                 
             } catch (error) {
@@ -1068,8 +1077,26 @@ class SocketController extends BaseController {
 
                     // Verify driver is available
                     const driverDoc = await Driver.findOne({ driverId: driver.driverId }).session(session);
-                    if (!driverDoc || driverDoc.status !== 'available' || !driverDoc.isOnline) {
-                        throw new Error('Driver is not available for bidding');
+                    if (!driverDoc) {
+                        throw new Error('Driver not found');
+                    }
+                    
+                    // Check if driver is online
+                    if (!driverDoc.isOnline) {
+                        throw new Error('Driver must be online to place bids');
+                    }
+                    
+                    // Check driver status - only 'available' drivers can bid
+                    if (driverDoc.status === 'busy') {
+                        throw new Error('Cannot place bid while on an active ride');
+                    }
+                    
+                    if (driverDoc.status === 'offline') {
+                        throw new Error('Driver is offline and cannot place bids');
+                    }
+                    
+                    if (driverDoc.status !== 'available') {
+                        throw new Error('Driver must be available to place bids');
                     }
 
                     // Check if driver already has a bid on this request
@@ -1160,9 +1187,29 @@ class SocketController extends BaseController {
                         message: 'This request is no longer accepting bids',
                         code: 'REQUEST_NOT_BIDDABLE'
                     });
-                } else if (error.message === 'Driver is not available for bidding') {
+                } else if (error.message === 'Driver not found') {
                     socket.emit('error', {
-                        message: 'Driver is not available for bidding',
+                        message: 'Driver not found',
+                        code: 'DRIVER_NOT_FOUND'
+                    });
+                } else if (error.message === 'Driver must be online to place bids') {
+                    socket.emit('error', {
+                        message: 'Driver must be online to place bids',
+                        code: 'DRIVER_NOT_ONLINE'
+                    });
+                } else if (error.message === 'Cannot place bid while on an active ride') {
+                    socket.emit('error', {
+                        message: 'Cannot place bid while on an active ride',
+                        code: 'DRIVER_BUSY'
+                    });
+                } else if (error.message === 'Driver is offline and cannot place bids') {
+                    socket.emit('error', {
+                        message: 'Driver is offline and cannot place bids',
+                        code: 'DRIVER_OFFLINE'
+                    });
+                } else if (error.message === 'Driver must be available to place bids') {
+                    socket.emit('error', {
+                        message: 'Driver must be available to place bids',
                         code: 'DRIVER_NOT_AVAILABLE'
                     });
                 } else {
