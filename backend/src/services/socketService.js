@@ -49,6 +49,10 @@ class SocketService extends EventEmitter {
             totalErrors: 0
         };
         this.driverStatusMap = new Map(); // Map to store driver status
+
+        // Add tracking for active ride requests
+        this.activeRideRequests = new Map(); // Map<requestId, {data, createdAt}>
+        this.RIDE_REQUEST_BROADCAST_DURATION = 10 * 60 * 1000; // 10 minutes in milliseconds
     }
 
     /**
@@ -134,10 +138,10 @@ class SocketService extends EventEmitter {
             this.connectedUsers.set(socketId, userInfo);
             this.joinRoom(socketId, `user:${userData.userId}`);
             this.startHeartbeat(socketId, 'user');
-            
+
             this.emit('user:connected', userInfo);
             logger.info(`User ${userData.userId} connected on socket ${socketId}`);
-            
+
             return userInfo;
         } finally {
             // Release lock
@@ -187,10 +191,15 @@ class SocketService extends EventEmitter {
             this.joinRoom(socketId, `driver:${driverData.driverId}`);
             this.joinRoom(socketId, 'drivers'); // Join general drivers room
             this.startHeartbeat(socketId, 'driver');
-            
+
             this.emit('driver:connected', driverInfo);
             logger.info(`Driver ${driverData.driverId} connected on socket ${socketId}`);
-            
+            // Broadcast active ride requests to the newly connected driver
+            setTimeout(() => {
+                if (driverInfo.status === 'available') {
+                    this.broadcastActiveRequestsToDriver(driverData.driverId, socketId);
+                }
+            }, 1000); // Small delay to ensure socket is fully set up
             return driverInfo;
         } finally {
             // Release lock
@@ -212,13 +221,13 @@ class SocketService extends EventEmitter {
 
             // Remove from connected users
             this.connectedUsers.delete(socketId);
-            
+
             // Stop heartbeat
             this.stopHeartbeat(socketId);
-            
+
             // Leave all rooms for this socket
             this.leaveAllRooms(socketId);
-            
+
             this.emit('user:disconnected', user);
             logger.info(`User ${user.userId} disconnected from socket ${socketId}`);
         }
@@ -237,13 +246,13 @@ class SocketService extends EventEmitter {
 
             // Remove from connected drivers
             this.connectedDrivers.delete(socketId);
-            
+
             // Stop heartbeat
             this.stopHeartbeat(socketId);
-            
+
             // Leave all rooms for this socket
             this.leaveAllRooms(socketId);
-            
+
             this.emit('driver:disconnected', driver);
             logger.info(`Driver ${driver.driverId} disconnected from socket ${socketId}`);
         }
@@ -272,7 +281,7 @@ class SocketService extends EventEmitter {
         const socket = this.getSocketById(socketId);
         if (socket) {
             socket.join(roomName);
-            
+
             // Track room membership
             if (!this.rooms.has(roomName)) {
                 this.rooms.set(roomName, new Set());
@@ -288,7 +297,7 @@ class SocketService extends EventEmitter {
         const socket = this.getSocketById(socketId);
         if (socket) {
             socket.leave(roomName);
-            
+
             // Update room tracking
             if (this.rooms.has(roomName)) {
                 this.rooms.get(roomName).delete(socketId);
@@ -317,9 +326,9 @@ class SocketService extends EventEmitter {
             try {
                 const socket = this.getSocketById(socketId);
                 if (socket && socket.connected) {
-                    socket.emit('heartbeat', { 
+                    socket.emit('heartbeat', {
                         timestamp: new Date(),
-                        type 
+                        type
                     });
                 } else {
                     logger.info(`Heartbeat stopped for disconnected socket ${socketId}`);
@@ -351,12 +360,12 @@ class SocketService extends EventEmitter {
     updateLastSeen(socketId) {
         const user = this.connectedUsers.get(socketId);
         const driver = this.connectedDrivers.get(socketId);
-        
+
         if (user) {
             user.lastSeen = new Date();
             this.connectedUsers.set(socketId, user);
         }
-        
+
         if (driver) {
             driver.lastSeen = new Date();
             this.connectedDrivers.set(socketId, driver);
@@ -411,13 +420,22 @@ class SocketService extends EventEmitter {
             logger.error('Invalid rideRequestData in broadcastRideRequest');
             return;
         }
-        
+
         try {
             logger.debug('=== BROADCAST RIDE REQUEST DEBUG START ===');
             logger.debug('Current driverStatusMap:', this.driverStatusMap);
             logger.debug(`Number of drivers in driverStatusMap: ${this.driverStatusMap.size}`);
             logger.debug(`Driver IDs in driverStatusMap: ${Array.from(this.driverStatusMap.keys())}`);
             logger.debug(`Number of drivers in 'drivers' room: ${this.io.sockets.adapter.rooms.get('drivers')?.size || 0}`);
+
+            // Store the ride request for future broadcasts to newly connected drivers
+            this.activeRideRequests.set(rideRequestData.requestId, {
+                data: rideRequestData,
+                createdAt: Date.now()
+            });
+
+            // Clean up expired ride requests
+            this.cleanupExpiredRideRequests();
 
             // Get available drivers - this will trigger our detailed debugging
             logger.debug('Calling getAvailableDrivers...');
@@ -428,21 +446,22 @@ class SocketService extends EventEmitter {
             if (availableDrivers.length === 0) {
                 logger.warn('No available drivers for ride request broadcast');
                 logger.debug('=== BROADCAST RIDE REQUEST DEBUG END (NO DRIVERS) ===');
-                return;
+                // Don't return here - we still want to store the request for future broadcasts
+            } else {
+                this.io.to('drivers').emit('ride:newRequest', {
+                    ...rideRequestData,
+                    broadcastAt: new Date().toISOString()
+                });
+                logger.info(`Broadcasted ride request ${rideRequestData.requestId} to ${availableDrivers.length} drivers`);
             }
-            
-            this.io.to('drivers').emit('ride:newRequest', {
-                ...rideRequestData,
-                broadcastAt: new Date().toISOString()
-            });
-            logger.info(`Broadcasted ride request ${rideRequestData.requestId} to ${availableDrivers.length} drivers`);
 
             // Also emit to specific location-based rooms if needed
             if (rideRequestData.pickupLocation?.coordinates) {
                 logger.debug('Broadcasting to location-based rooms is not yet implemented');
             }
-            
+
             logger.debug('=== BROADCAST RIDE REQUEST DEBUG END (SUCCESS) ===');
+            logger.info(`Stored ride request ${rideRequestData.requestId} for continuous broadcast (expires in 10 minutes)`);
 
         } catch (error) {
             logger.error('Error broadcasting ride request:', error);
@@ -538,7 +557,90 @@ class SocketService extends EventEmitter {
             logger.info(`Ride cancellation broadcasted for request ${requestId}`);
         } catch (error) {
             logger.error('Error broadcasting ride cancellation:', error);
-            throw error;
+        }
+    }
+
+    /**
+     * Clean up expired ride requests (older than 10 minutes)
+     */
+    cleanupExpiredRideRequests() {
+        const now = Date.now();
+        let cleanedCount = 0;
+
+        for (const [requestId, requestData] of this.activeRideRequests) {
+            if (now - requestData.createdAt > this.RIDE_REQUEST_BROADCAST_DURATION) {
+                this.activeRideRequests.delete(requestId);
+                cleanedCount++;
+                logger.info(`Removed expired ride request ${requestId} from active broadcasts`);
+            }
+        }
+
+        if (cleanedCount > 0) {
+            logger.info(`Cleaned up ${cleanedCount} expired ride requests`);
+        }
+    }
+
+    /**
+     * Get active ride requests that should be broadcasted (within 10 minutes)
+     */
+    getActiveRideRequestsForBroadcast() {
+        const now = Date.now();
+        const activeRequests = [];
+
+        for (const [requestId, requestData] of this.activeRideRequests) {
+            const age = now - requestData.createdAt;
+            if (age <= this.RIDE_REQUEST_BROADCAST_DURATION) {
+                activeRequests.push({
+                    ...requestData.data,
+                    ageInSeconds: Math.floor(age / 1000)
+                });
+            }
+        }
+
+        return activeRequests;
+    }
+
+    /**
+     * Broadcast active ride requests to a specific driver
+     */
+    broadcastActiveRequestsToDriver(driverId, socketId) {
+        try {
+            const activeRequests = this.getActiveRideRequestsForBroadcast();
+
+            if (activeRequests.length === 0) {
+                logger.info(`No active ride requests to broadcast to driver ${driverId}`);
+                return;
+            }
+
+            logger.info(`Broadcasting ${activeRequests.length} active ride requests to newly connected driver ${driverId}`);
+
+            // Send each active ride request to the driver
+            activeRequests.forEach(request => {
+                const socket = this.io.sockets.sockets.get(socketId);
+                if (socket) {
+                    socket.emit('ride:newRequest', {
+                        ...request,
+                        isDelayedBroadcast: true, // Flag to indicate this is not a real-time broadcast
+                        broadcastAt: new Date().toISOString()
+                    });
+
+                    logger.debug(`Sent ride request ${request.requestId} to driver ${driverId} (age: ${request.ageInSeconds}s)`);
+                }
+            });
+
+            logger.info(`Successfully broadcast ${activeRequests.length} active ride requests to driver ${driverId}`);
+        } catch (error) {
+            logger.error(`Error broadcasting active requests to driver ${driverId}:`, error);
+        }
+    }
+
+    /**
+     * Remove a ride request from active broadcasts
+     */
+    removeActiveRideRequest(requestId) {
+        if (this.activeRideRequests.has(requestId)) {
+            this.activeRideRequests.delete(requestId);
+            logger.info(`Removed ride request ${requestId} from active broadcasts`);
         }
     }
 
@@ -574,11 +676,11 @@ class SocketService extends EventEmitter {
      */
     getAvailableDrivers() {
         logger.debug('=== getAvailableDrivers DEBUG START ===');
-        
+
         // Log the current state of connectedDrivers and driverStatusMap
         const connectedDriversArray = Array.from(this.connectedDrivers.values());
         const driverStatusMapArray = Array.from(this.driverStatusMap.entries());
-        
+
         logger.debug(`Total connected drivers: ${connectedDriversArray.length}`);
         logger.debug('Connected Drivers details:', connectedDriversArray.map(d => ({
             driverId: d.driverId,
@@ -586,7 +688,7 @@ class SocketService extends EventEmitter {
             socketId: d.socketId,
             isActive: d.isActive
         })));
-        
+
         logger.debug(`Total entries in driverStatusMap: ${driverStatusMapArray.length}`);
         logger.debug('Driver Status Map details:', driverStatusMapArray);
 
@@ -604,7 +706,7 @@ class SocketService extends EventEmitter {
             status: d.status,
             socketId: d.socketId
         })));
-        
+
         logger.debug('=== getAvailableDrivers DEBUG END ===');
 
         return availableDrivers;
@@ -623,13 +725,13 @@ class SocketService extends EventEmitter {
      */
     handleDriverConnected(driverInfo) {
         logger.debug(`handleDriverConnected called with:`, driverInfo);
-        
+
         // Don't override the driver status here - it's already set in registerDriver
         // This event handler is called after registration is complete
-        
+
         // Emit updated stats
         this.emit('stats:updated', this.getStats());
-        
+
         logger.info(`Driver ${driverInfo.driverId} connection handled - preserving existing status`);
     }
 
@@ -657,14 +759,14 @@ class SocketService extends EventEmitter {
         for (const interval of this.heartbeatTimeouts.values()) {
             clearInterval(interval);
         }
-        
+
         this.heartbeatTimeouts.clear();
         this.connectedUsers.clear();
         this.connectedDrivers.clear();
         this.rooms.clear();
         this.connectionLocks.clear();
         this.pendingRegistrations.clear();
-        
+
         logger.info('Socket service cleaned up');
     }
 
@@ -706,17 +808,28 @@ class SocketService extends EventEmitter {
             return;
         }
 
+        const previousStatus = this.driverStatusMap.get(driverId);
         logger.info(`Driver ${driverId} marked ${status} and added to driverStatusMap`);
         this.driverStatusMap.set(driverId, status);
         logger.info(`Updated driver status: ${driverId} -> ${status}`);
-        
+
         // Also update the connected driver's status if they're connected
         const connectedDriver = this.getDriverByDriverId(driverId);
         if (connectedDriver) {
             connectedDriver.status = status;
             this.connectedDrivers.set(connectedDriver.socketId, connectedDriver);
             logger.info(`Driver ${driverId} connection handled - preserving existing status`);
+
+            // If driver just became available, broadcast active ride requests to them
+            if (status === 'available' && previousStatus !== 'available') {
+                logger.info(`Driver ${driverId} became available, broadcasting active ride requests`);
+                setTimeout(() => {
+                    this.broadcastActiveRequestsToDriver(driverId, connectedDriver.socketId);
+                }, 500); // Small delay to ensure status is fully updated
+            }
         }
+
+        logger.info(`Updated driver status: ${driverId} -> ${status}`);
     }
 
     /**
@@ -726,18 +839,18 @@ class SocketService extends EventEmitter {
         logger.debug('=== GET AVAILABLE DRIVERS DEBUG START ===');
         logger.debug(`Total connected drivers: ${this.connectedDrivers.size}`);
         logger.debug(`Total drivers in status map: ${this.driverStatusMap.size}`);
-        
+
         const availableDrivers = [];
-        
+
         // Check connected drivers and their status
         for (const [socketId, driver] of this.connectedDrivers) {
             logger.debug(`Checking driver ${driver.driverId}: connected=${driver.isActive}, status=${driver.status}`);
-            
+
             // Check if driver is available in both connected drivers and status map
             const statusMapStatus = this.driverStatusMap.get(driver.driverId);
             logger.debug(`Driver ${driver.driverId} status in map: ${statusMapStatus}`);
-            
-            if (driver.isActive && 
+
+            if (driver.isActive &&
                 (driver.status === 'available' || statusMapStatus === 'available')) {
                 availableDrivers.push(driver);
                 logger.debug(`Driver ${driver.driverId} is AVAILABLE`);
@@ -745,10 +858,10 @@ class SocketService extends EventEmitter {
                 logger.debug(`Driver ${driver.driverId} is NOT AVAILABLE - isActive: ${driver.isActive}, status: ${driver.status}, mapStatus: ${statusMapStatus}`);
             }
         }
-        
+
         logger.debug(`Found ${availableDrivers.length} available drivers`);
         logger.debug('=== GET AVAILABLE DRIVERS DEBUG END ===');
-        
+
         return availableDrivers;
     }
 
@@ -807,6 +920,9 @@ class SocketService extends EventEmitter {
             }
         }
 
+        // Clean up expired ride requests from active broadcasts
+        this.cleanupExpiredRideRequests();
+
         if (cleaned > 0) {
             logger.info(`Periodic cleanup completed: ${cleaned} stale connections removed`);
         }
@@ -820,7 +936,7 @@ class SocketService extends EventEmitter {
     performHealthCheck() {
         try {
             const stats = this.getStats();
-            
+
             if (SOCKET_CONFIG.LOG_PERFORMANCE_METRICS) {
                 logger.info('Socket Health Check:', {
                     ...stats,
@@ -837,8 +953,8 @@ class SocketService extends EventEmitter {
             }
 
             // Force garbage collection if needed
-            if (SOCKET_CONFIG.FORCE_GC_INTERVAL && 
-                Date.now() - this.lastCleanup > SOCKET_CONFIG.FORCE_GC_INTERVAL && 
+            if (SOCKET_CONFIG.FORCE_GC_INTERVAL &&
+                Date.now() - this.lastCleanup > SOCKET_CONFIG.FORCE_GC_INTERVAL &&
                 global.gc) {
                 global.gc();
                 logger.info('Forced garbage collection completed');
@@ -867,16 +983,16 @@ class SocketService extends EventEmitter {
      */
     updateDriverStatus(driverId, status) {
         logger.debug(`Updating driver status for ${driverId} to ${status}`);
-        
+
         // Use Map's efficient lookup instead of loop
         const driverEntry = Array.from(this.connectedDrivers.entries())
             .find(([_, driver]) => driver.driverId === driverId);
-        
+
         if (driverEntry) {
             const [socketId, driver] = driverEntry;
             driver.status = status;
             this.connectedDrivers.set(socketId, driver);
-            
+
             // Update driverStatusMap for available drivers
             if (status === 'available' || status === 'online') {
                 this.driverStatusMap.set(driverId, {
@@ -889,13 +1005,13 @@ class SocketService extends EventEmitter {
                 this.driverStatusMap.delete(driverId);
                 logger.info(`Driver ${driverId} marked ${status} and removed from driverStatusMap`);
             }
-            
+
             logger.debug(`Driver ${driverId} status updated in connectedDrivers:`, driver);
             logger.debug(`Current driverStatusMap after update:`, Array.from(this.driverStatusMap.entries()));
         } else {
             logger.warn(`Driver ${driverId} not found in connectedDrivers`);
         }
-        
+
         logger.info(`Updated driver status: ${driverId} -> ${status}`);
     }
 

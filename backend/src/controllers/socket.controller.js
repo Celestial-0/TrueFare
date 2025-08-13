@@ -549,6 +549,9 @@ class SocketController extends BaseController {
                     driverInfo: result.driverInfo,
                     userInfo: user
                 });
+                
+                // Remove the ride request from active broadcasts since it's now accepted
+                socketService.removeActiveRideRequest(result.rideRequest._id.toString());
 
                 console.log('Bid acceptance broadcasted successfully');
 
