@@ -39,7 +39,7 @@ interface LoginUserProps {
 export default function LoginUser({ onLogin, onRegister, onSuccess }: LoginUserProps) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { loginUser, addNotification } = useApp();
+  const { loginUser, registerUser, addNotification } = useApp();
   
   const [formData, setFormData] = useState<UserLoginFormData>({
     phone: '',
@@ -136,17 +136,25 @@ export default function LoginUser({ onLogin, onRegister, onSuccess }: LoginUserP
     if (!validateForm()) return;
 
     setIsLoading(true);
-
     try {
-      const authData = {
-        phone: formData.phone.trim(),
-        name: formData.name.trim(),
-        ...(formData.email && { email: formData.email.trim() }),
-      };
+      const normalizedPhone = formData.phone.replace(/\s+/g, '').trim();
+      
+      let result;
+      if (isLoginMode) {
+        // Login mode - only send phone
+        result = await loginUser({
+          phone: normalizedPhone,
+        });
+      } else {
+        // Signup mode - send all registration data
+        result = await registerUser({
+          phone: normalizedPhone,
+          name: formData.name,
+          email: formData.email || undefined,
+        });
+      }
 
-      const user = await loginUser(authData);
-
-      if (user) {
+      if (result) {
         const successMessage = isLoginMode ? 'Login successful!' : 'Registration successful!';
         addNotification({
           type: 'success', message: successMessage,
@@ -155,9 +163,9 @@ export default function LoginUser({ onLogin, onRegister, onSuccess }: LoginUserP
         Alert.alert('Success', successMessage);
         onSuccess?.();
         if (isLoginMode) {
-          onLogin?.(user);
+          onLogin?.(result);
         } else {
-          onRegister?.(user);
+          onRegister?.(result);
         }
       } else {
         Alert.alert('Authentication Failed', 'Please check your details and try again.');

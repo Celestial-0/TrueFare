@@ -58,6 +58,8 @@ export interface AppContextType extends AppState {
   clearAvailableRequests: () => void;
   refreshAvailableRequests: () => void;
   fetchRideHistory: () => void;
+  registerUser: (data: any) => Promise<User | null>;
+  registerDriver: (data: any) => Promise<Driver | null>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -799,6 +801,87 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [connectSocket]);
 
+  const registerUser = useCallback(async (data: any) => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const response = await authService.auth.registerUser(data);
+      if (response && response.data) {
+        const user = response.data;
+        dispatch({ type: 'LOGIN_SUCCESS', payload: { userType: 'user', data: user } });
+        await storageService.setUserData(user);
+        await storageService.setUserType('user');
+
+        // Connect socket and ensure registration
+        connectSocket();
+
+        // If socket is already connected, emit registration now
+        if (webSocketService.isConnected()) {
+          const userId = user.userId || user._id;
+          console.log('[REGISTER] Socket already connected, emitting user:register immediately');
+          webSocketService.emit(SOCKET_EVENTS.USER_REGISTER, {
+            userId: userId,
+            location: user.currentLocation,
+            timestamp: Date.now(),
+          });
+        } else {
+          console.log('[REGISTER] Socket not connected yet; central connect handler will register upon connect');
+        }
+
+        return user;
+      }
+      dispatch({ type: 'SET_ERROR', payload: { message: response.message || 'Registration failed' } });
+      return null;
+    } catch (error: any) {
+      dispatch({ type: 'SET_ERROR', payload: { message: error.message } });
+      return null;
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  }, [connectSocket]);
+
+  const registerDriver = useCallback(async (data: any) => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const response = await authService.auth.registerDriver(data);
+      if (response && response.data) {
+        const driver = response.data;
+        dispatch({ type: 'LOGIN_SUCCESS', payload: { userType: 'driver', data: driver } });
+        await storageService.setDriverData(driver);
+        await storageService.setUserType('driver');
+
+        // Connect socket and ensure registration
+        connectSocket();
+
+        // If socket is already connected, emit registration now
+        if (webSocketService.isConnected()) {
+          const driverId = driver.driverId || driver._id;
+          console.log('[REGISTER] Socket already connected, emitting driver:register immediately');
+          webSocketService.emit(SOCKET_EVENTS.DRIVER_REGISTER, {
+            driverId: driverId,
+            name: driver.name,
+            phone: driver.phone,
+            vehicleInfo: data.vehicleInfo,
+            location: driver.currentLocation,
+            timestamp: Date.now(),
+          });
+        } else {
+          console.log('[REGISTER] Socket not connected yet; central connect handler will register upon connect');
+        }
+
+        return driver;
+      }
+      console.error('[DRIVER_REGISTER] Registration failed:', response.message);
+      dispatch({ type: 'SET_ERROR', payload: { message: response.message || 'Registration failed' } });
+      return null;
+    } catch (error: any) {
+      console.error('[DRIVER_REGISTER] Registration error:', error);
+      dispatch({ type: 'SET_ERROR', payload: { message: error.message } });
+      return null;
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  }, [connectSocket]);
+
   const logout = useCallback(async () => {
     disconnectSocket();
     await storageService.clearAuthData();
@@ -1117,88 +1200,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [state.currentUser]);
 
-  const registerDriver = useCallback(async (data: any) => {
-    dispatch({ type: 'SET_LOADING', payload: true });
-    try {
-      const response = await authService.auth.registerDriver(data);
-      if (response && response.data) {
-        const driver = response.data;
-        dispatch({ type: 'LOGIN_SUCCESS', payload: { userType: 'driver', data: driver } });
-        await storageService.setDriverData(driver);
-        await storageService.setUserType('driver');
-
-        // Connect socket and ensure registration
-        connectSocket();
-
-        // If socket is already connected, emit registration now; otherwise
-        // connectSocket's central handler will register on connect
-        if (webSocketService.isConnected()) {
-          const driverId = driver.driverId || driver._id;
-          console.log('[REGISTER] Socket already connected, emitting driver:register immediately');
-          webSocketService.emit(SOCKET_EVENTS.DRIVER_REGISTER, {
-            driverId: driverId,
-            name: driver.name,
-            phone: driver.phone,
-            email: driver.email,
-            location: driver.currentLocation,
-            vehicleInfo: driver.vehicleInfo,
-            timestamp: Date.now(),
-          });
-        } else {
-          console.log('[REGISTER] Socket not connected yet; central connect handler will register upon connect');
-        }
-
-        return driver;
-      }
-      dispatch({ type: 'SET_ERROR', payload: { message: response.message || 'Registration failed' } });
-      return null;
-    } catch (error: any) {
-      dispatch({ type: 'SET_ERROR', payload: { message: error.message } });
-      return null;
-    } finally {
-      dispatch({ type: 'SET_LOADING', payload: false });
-    }
-  }, [connectSocket]);
-
-  const registerUser = useCallback(async (data: any) => {
-    dispatch({ type: 'SET_LOADING', payload: true });
-    try {
-      const response = await authService.auth.registerUser(data);
-      if (response && response.data) {
-        const user = response.data;
-        dispatch({ type: 'LOGIN_SUCCESS', payload: { userType: 'user', data: user } });
-        await storageService.setUserData(user);
-        await storageService.setUserType('user');
-
-        // Connect socket and ensure registration
-        connectSocket();
-
-        // If socket is already connected, emit registration now; otherwise
-        // connectSocket's central handler will register on connect
-        if (webSocketService.isConnected()) {
-          const userId = user.userId || user._id;
-          console.log('[REGISTER] Socket already connected, emitting user:register immediately');
-          webSocketService.emit(SOCKET_EVENTS.USER_REGISTER, {
-            userId: userId,
-            location: user.currentLocation,
-            timestamp: Date.now(),
-          });
-        } else {
-          console.log('[REGISTER] Socket not connected yet; central connect handler will register upon connect');
-        }
-
-        return user;
-      }
-      dispatch({ type: 'SET_ERROR', payload: { message: response.message || 'Registration failed' } });
-      return null;
-    } catch (error: any) {
-      dispatch({ type: 'SET_ERROR', payload: { message: error.message } });
-      return null;
-    } finally {
-      dispatch({ type: 'SET_LOADING', payload: false });
-    }
-  }, [connectSocket]);
-
   const contextValue = {
     ...state,
     dispatch,
@@ -1229,8 +1230,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     clearAvailableRequests,
     refreshAvailableRequests,
     fetchRideHistory,
-    registerDriver,
     registerUser,
+    registerDriver,
   };
 
   useEffect(() => {

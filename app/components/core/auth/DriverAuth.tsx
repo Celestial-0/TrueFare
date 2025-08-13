@@ -53,7 +53,7 @@ interface LoginDriverProps {
 export default function LoginDriver({ onSuccess }: LoginDriverProps) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { loginDriver, addNotification } = useApp();
+  const { loginDriver, registerDriver, addNotification } = useApp();
 
   const [currentPage, setCurrentPage] = useState<AuthPage>('login');
   const [formData, setFormData] = useState<Partial<DriverFormData>>({
@@ -201,23 +201,42 @@ export default function LoginDriver({ onSuccess }: LoginDriverProps) {
     setIsLoading(true);
 
     try {
-      const authData = {
-        phone: formData.phone!.trim(),
-        name: formData.name!.trim(),
-        email: formData.email?.trim(),
-        vehicleInfo: {
-          make: formData.make!.trim(),
-          model: formData.model!.trim(),
-          year: parseInt(formData.year!, 10),
-          licensePlate: formData.licensePlate!.trim(),
-          color: formData.color!.trim(),
-          type: formData.vehicleType!,
-        },
-      };
+      const normalizedPhone = formData.phone!.replace(/\s+/g, '').trim();
+      
+      let result;
+      if (isLoginMode) {
+        // Login mode - only send phone
+        result = await loginDriver({
+          phone: normalizedPhone,
+        });
+      } else {
+        // Signup mode - send all registration data including vehicle info
+        // Map frontend vehicle type to backend format
+        const vehicleTypeMap: { [key: string]: string } = {
+          'Taxi': 'TAXI',
+          'AC_Taxi': 'AC_TAXI',
+          'Bike': 'BIKE',
+          'EBike': 'EBIKE',
+          'ERiksha': 'ERICKSHAW',
+          'Auto': 'AUTO'
+        };
 
-      const driver = await loginDriver(authData);
+        result = await registerDriver({
+          phone: normalizedPhone,
+          name: formData.name!.trim(),
+          email: formData.email?.trim() || undefined,
+          vehicleInfo: {
+            make: formData.make!.trim(),
+            model: formData.model!.trim(),
+            year: formData.year!.toString(), // Backend expects year as string
+            licensePlate: formData.licensePlate!.trim(),
+            color: formData.color!.trim(),
+            vehicleType: vehicleTypeMap[formData.vehicleType!] || formData.vehicleType!,
+          },
+        });
+      }
 
-      if (driver) {
+      if (result) {
         const successMessage = isLoginMode ? 'Login successful!' : 'Registration successful!';
         addNotification({ type: 'success', message: successMessage, createdAt: new Date() });
         Alert.alert('Success', successMessage);
