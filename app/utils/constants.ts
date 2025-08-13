@@ -1,22 +1,12 @@
 import { Platform } from 'react-native';
-
+import config from '@/config/env';
 // Network configuration - automatically detects environment
-const getServerUrl = () => {
-  // For development, use the IP address shown in Metro bundler
-  // For production, use your actual server URL
-  if (__DEV__) {
-    // This IP should match what's shown in your Metro bundler output
-    return `${process.env.EXPO_PUBLIC_MAIN_URL}:8000` || 'http://localhost:8000';
-  } else {
-    // Production server URL
-    return `${process.env.EXPO_PUBLIC_MAIN_URL}:8000` ;
-  }
-};
 
-const SERVER_URL = getServerUrl();
+
+const SERVER_URL = config.MAIN_URL;
 
 // API Configuration - Updated to work with backend
-export const API_BASE_URL = `http://${SERVER_URL}/api`;
+export const API_BASE_URL = config.API_BASE_URL;
 export const SOCKET_URL = `http://${SERVER_URL}`;
 
 // Environment Configuration

@@ -12,8 +12,8 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
     cors: {
-        origin: config.server.clientUrl,
-        methods: ['GET', 'POST'],
+        origin: config.server.allowedOrigins,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
         credentials: true,
     },
 });
@@ -21,10 +21,26 @@ const io = new Server(server, {
 // Initialize all socket handlers through the controller
 initializeSocketHandlers(io);
 
-app.use(cors({
-    origin: config.server.clientUrl,
+// CORS configuration
+const corsOptions = {
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or Postman)
+        if (!origin) return callback(null, true);
+        
+        // Check if origin is in allowed list
+        const allowedOrigins = config.server.allowedOrigins;
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
-}));
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
 
 app.use(express.json({
     limit: '50kb',

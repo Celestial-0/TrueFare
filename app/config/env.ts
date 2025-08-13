@@ -14,48 +14,83 @@ export interface EnvConfig {
   APP_VERSION: string;
   DEBUG_MODE: boolean;
   DEFAULT_TIMEOUT: number;
+  IS_DEV: boolean;
+  PORT: number | null; // Port is only used in development
 }
 
-// Function to get the correct host URL for development
-const getHostUrl = (): string => {
-  // Prefer the environment variable if it's set for production or specific overrides.
-  const envUrl = process.env.EXPO_PUBLIC_MAIN_URL;
-  if (envUrl) {
-    return envUrl;
+// Configuration for different environments
+const ENV = {
+  development: {
+    port: 8000,
+    // Development URLs without protocol for flexible construction
+    host: Platform.OS === 'android' ? '10.0.2.2' : 'localhost',
+  },
+  production: {
+    // Production URLs are fully qualified and don't need a separate port
+    apiUrl: 'https://truefare.onrender.com',
+    socketUrl: 'https://truefare.onrender.com',
   }
+};
 
-  // For Android emulators, use the environment variable 'ANDROID_LOCALHOST'
-  // For iOS simulators, use the environment variable 'IOS_LOCALHOST'
-  if (Platform.OS === 'android') {
-    return process.env.ANDROID_LOCALHOST || '10.0.2.2';
+// Helper function to get the appropriate host URL based on platform
+const getHostUrl = (): string => {
+  if (__DEV__) {
+    // In development mode
+    return ENV.development.host;
+  } else {
+    // In production mode, return the Render backend domain
+    return 'truefare.onrender.com';
   }
-  return process.env.IOS_LOCALHOST || 'localhost';
+};
+
+// Get the API URL based on environment
+const getApiUrl = (): string => {
+  if (__DEV__) {
+    const host = getHostUrl();
+    const port = ENV.development.port;
+    return `http://${host}:${port}/api`;
+  } else {
+    // Production API URL with HTTPS
+    return ENV.production.apiUrl;
+  }
+};
+
+// Get the WebSocket URL based on environment
+const getSocketUrl = (): string => {
+  if (__DEV__) {
+    const host = getHostUrl();
+    const port = ENV.development.port;
+    return `http://${host}:${port}`;
+  } else {
+    // Production Socket URL with HTTPS
+    return ENV.production.socketUrl;
+  }
 };
 
 // Default fallback values
 const defaultConfig: EnvConfig = {
-  API_BASE_URL: 'http://localhost:8000/api',
-  SOCKET_URL: 'http://localhost:8000',
-  MAIN_URL: 'localhost',
+  API_BASE_URL: getApiUrl(),
+  SOCKET_URL: getSocketUrl(),
+  MAIN_URL: getHostUrl(),
   APP_NAME: 'TrueFare',
   APP_VERSION: '0.2.1',
-  DEBUG_MODE: true,
+  DEBUG_MODE: __DEV__,
   DEFAULT_TIMEOUT: 10000,
+  IS_DEV: __DEV__,
+  PORT: __DEV__ ? ENV.development.port : null, // Port is null in production
 };
-
-// Get the appropriate host URL
-const mainUrl = getHostUrl();
 
 // Environment configuration object with dynamic URL construction
 export const config: EnvConfig = {
-  MAIN_URL: mainUrl,
-  API_BASE_URL: `http://${mainUrl}:8000/api`,
-  SOCKET_URL: `http://${mainUrl}:8000`,
-  APP_NAME: process.env.APP_NAME || defaultConfig.APP_NAME,
-  APP_VERSION: process.env.APP_VERSION || defaultConfig.APP_VERSION,
-  DEBUG_MODE: process.env.DEBUG_MODE === 'true' || defaultConfig.DEBUG_MODE,
-  DEFAULT_TIMEOUT: process.env.DEFAULT_TIMEOUT ? 
-    parseInt(process.env.DEFAULT_TIMEOUT, 10) : defaultConfig.DEFAULT_TIMEOUT,
+  MAIN_URL: defaultConfig.MAIN_URL,
+  API_BASE_URL: defaultConfig.API_BASE_URL,
+  SOCKET_URL: defaultConfig.SOCKET_URL,
+  APP_NAME: defaultConfig.APP_NAME,
+  APP_VERSION: defaultConfig.APP_VERSION,
+  DEBUG_MODE: defaultConfig.DEBUG_MODE,
+  DEFAULT_TIMEOUT: defaultConfig.DEFAULT_TIMEOUT,
+  IS_DEV: defaultConfig.IS_DEV,
+  PORT: defaultConfig.PORT,
 };
 
 // Helper function to check if we're in development mode
@@ -63,15 +98,22 @@ export const isDevelopment = (): boolean => {
   return __DEV__ || config.DEBUG_MODE;
 };
 
-// Helper function to log configuration (only in development)
-export const logConfig = (): void => {
-  if (isDevelopment()) {
-    console.log('📱 App Configuration:', {
-      ...config,
-      // Show environment variable source
-      'EXPO_PUBLIC_MAIN_URL': process.env.EXPO_PUBLIC_MAIN_URL,
-      'MAIN_URL': process.env.MAIN_URL,
-    });
+// Helper function to get full API URL with /api suffix
+export const getFullApiUrl = (): string => {
+  return `${config.API_BASE_URL}/api`;
+};
+
+// Helper function to log environment info (dev mode only)
+export const logEnvironmentInfo = (): void => {
+  if (__DEV__) {
+    console.log('🔧 Environment Configuration:');
+    console.log(`   Platform: ${Platform.OS}`);
+    console.log(`   Host: ${config.MAIN_URL}`);
+    console.log(`   API URL: ${config.API_BASE_URL}`);
+    console.log(`   Socket URL: ${config.SOCKET_URL}`);
+    console.log(`   Full API URL: ${getFullApiUrl()}`);
+    console.log(`   Debug Mode: ${config.DEBUG_MODE}`);
+    console.log(`   Port: ${config.PORT !== null ? config.PORT : 'N/A (production)'}`);
   }
 };
 

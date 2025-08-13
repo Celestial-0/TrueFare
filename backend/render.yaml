@@ -1,0 +1,20 @@
+services:
+  # Web Service for the Node.js Backend
+  - type: web
+    name: truefare-backend
+    runtime: node
+    region: oregon # You can change to singapore, frankfurt, ohio, or virginia
+    plan: free # Start with free tier, upgrade as needed
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000 # Render uses port 10000 by default
+      - key: MONGO_URI
+        sync: false # Will be set manually in Render dashboard
+      - key: EXPO_PUBLIC_MAIN_URL
+        sync: false # Will be set to your Render URL
+    healthCheckPath: /
+    autoDeploy: true # Auto-deploy on push to main branch

@@ -1,8 +1,13 @@
-// API Base URL - Update this to match your backend server
-export const API_BASE_URL = `http://${process.env.EXPO_PUBLIC_MAIN_URL}:8000/api`; // Change to your backend URL
+import config from '@/config/env';
+// Network configuration - automatically detects environment
 
-// Socket.io connection URL
-export const SOCKET_URL = `http://${process.env.EXPO_PUBLIC_MAIN_URL}:8000`; // Change to your backend URL
+
+const SERVER_URL = config.MAIN_URL;
+
+// API Configuration - Updated to work with backend
+export const API_BASE_URL = config.API_BASE_URL;
+export const SOCKET_URL = `http://${SERVER_URL}`;
+
 
 // API Endpoints
 
