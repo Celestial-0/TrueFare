@@ -27,7 +27,7 @@ const ENV = {
   },
   production: {
     // Production URLs are fully qualified and don't need a separate port
-    apiUrl: 'https://truefare.onrender.com',
+    apiUrl: 'https://truefare.onrender.com/api',
     socketUrl: 'https://truefare.onrender.com',
   }
 };

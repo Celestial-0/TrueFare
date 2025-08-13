@@ -11,7 +11,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 10000 # Render uses port 10000 by default
+        value: 8000 # Render uses port 10000 by default
       - key: MONGO_URI
         sync: false # Will be set manually in Render dashboard
       - key: EXPO_PUBLIC_MAIN_URL
